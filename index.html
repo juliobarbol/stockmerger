@@ -8604,7 +8604,21 @@ if (document.readyState === 'loading') {
 // WORKSPACE.JS — Central COMPARTIDA (Fase 3) — estado completo en la nube
 // ════════════════════════════════════════════════════════════════════
 //
-// 🆕 v25d — DOS PERSONAS, UNA CENTRAL
+// 🆕 v25e — DOS O MÁS DISPOSITIVOS, UNA CENTRAL
+//
+//   FIX v25e — CONFLICTO FANTASMA:
+//   La detección de cambios hasheaba el payload COMPLETO, que incluye
+//   `_exportedAt` (la hora del build). Como ese campo cambia en cada
+//   llamada, el hash daba SIEMPRE distinto aunque los datos fueran
+//   idénticos → wsPush nunca devolvía 'unchanged', subía cada 15s
+//   inflando el rev, y el guardia de Realtime creía que siempre había
+//   cambios locales sin guardar (así el otro equipo NUNCA auto-traía).
+//   El rev divergía y al siguiente push saltaba el "CONFLICTO" aunque
+//   nadie hubiera tocado nada. Ahora el hash se calcula sobre el estado
+//   REAL, ignorando los campos volátiles (_wsStableHash). Sin cambios
+//   reales → 'unchanged' → no se sube, no se infla rev, no hay conflicto.
+//   Esto además habilita >2 dispositivos: el control por `rev` ya es
+//   N-dispositivos por turnos; lo único que lo rompía era este bug.
 //
 //   Permite que dos (o más) dispositivos compartan el MISMO estado de la
 //   central: stock, precios, multiplicadores, precios China, decisiones,
@@ -8624,8 +8638,12 @@ if (document.readyState === 'loading') {
 //   filas → detectamos el conflicto y NO pisamos su trabajo a ciegas:
 //   avisamos y dejamos elegir (traer su versión o resguardar la propia).
 //
-//   Pensado para uso POR TURNOS (uno edita, guarda; después el otro). Los
-//   conflictos solo aparecen si dos editan a la vez; ahí el guardia actúa.
+//   Pensado para uso POR TURNOS (uno edita, guarda; después el otro, sea
+//   2 o más dispositivos: PCs de la central, el celu del dueño, la compu
+//   de un trabajador desde su casa, etc.). Los conflictos solo aparecen si
+//   dos editan EXACTAMENTE a la vez sobre la misma base; ahí el guardia
+//   actúa. Un dispositivo que solo mira recibe los cambios por Realtime y
+//   nunca dispara conflicto (no tiene cambios locales que subir).
 //
 //   Reutiliza buildBackupPayload()/applyBackupData() de backup.js — el
 //   mismo formato del "Backup completo".
@@ -8680,10 +8698,27 @@ function _wsHash(str) {
   return String(h >>> 0) + ':' + str.length;
 }
 
+// Campos volátiles del payload que NO representan un cambio real de datos.
+// `_exportedAt` se estampa con new Date() en cada build → si entra al hash,
+// la detección de cambios da SIEMPRE distinto y dispara conflictos fantasma.
+// `_type` también es metadata (siempre 'full' acá). Los excluimos del hash
+// de detección. (El payload que se SUBE sigue llevando _exportedAt real;
+// solo neutralizamos su efecto en la comparación.) — fix v25e.
+const _WS_VOLATILE_KEYS = ['_exportedAt', '_type'];
+
+function _wsStableHash(payload) {
+  let obj = payload;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    obj = Object.assign({}, payload);          // clon superficial
+    for (const k of _WS_VOLATILE_KEYS) delete obj[k];
+  }
+  return _wsHash(JSON.stringify(obj));
+}
+
 function _wsBuild() {
   const payload = buildBackupPayload(false);
   const json = JSON.stringify(payload);
-  return { payload, json, hash: _wsHash(json) };
+  return { payload, json, hash: _wsStableHash(payload) };
 }
 
 // ── Status helper (div #wsStatus) ──
@@ -8727,7 +8762,7 @@ async function wsPull(opts = {}) {
       return { status: 'error' };
     }
     wsSetRev(remoteRev);
-    wsSetLastHash(_wsHash(JSON.stringify(data.payload)));
+    wsSetLastHash(_wsStableHash(data.payload));
     _wsConflict = false;
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     wsStatus(`Actualizado desde la nube ${hora} ✓ (v${remoteRev}).`, 'ok');
@@ -8974,7 +9009,7 @@ function wsInitUI() {
   } else if (!scIsConfigured()) {
     wsStatus('Configurá la nube arriba para poder activar la central compartida.', '');
   } else {
-    wsStatus('Central compartida apagada (opcional). Activala para compartir entre 2 PCs.', '');
+    wsStatus('Central compartida apagada (opcional). Activala para compartir entre 2 o más dispositivos.', '');
   }
 }
 
