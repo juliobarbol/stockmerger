@@ -1,1 +1,1 @@
-stockerger - app de stock central para control y autorizacion de ventas
+stockerger - app de stock central para control y autorizacion de ventass
