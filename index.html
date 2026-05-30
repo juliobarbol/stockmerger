@@ -2396,22 +2396,15 @@ tr.row-lowstock td{background:#f59e0b08}
       </div>
     </div>
 
-    <!-- 🔄 Central compartida (dos PCs sobre el mismo inventario) -->
+    <!-- 🔄 Central compartida (sincronización fila por fila) -->
     <div class="backup-section">
       <div class="section-title">🔄 Central compartida</div>
       <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">
-        Para que dos personas trabajen sobre el MISMO stock, precios y pedidos.
-        Usa la misma config de nube de arriba. Pensado para trabajar por turnos.
+        Para que varias personas trabajen sobre el MISMO stock, precios y pedidos.
+        Cada producto, rubro y pedido se sincroniza por separado, así pueden
+        editar a la vez sin pisarse. Usa la misma config de nube de arriba.
       </p>
-      <label class="ws-toggle">
-        <input type="checkbox" id="wsEnabledChk" onchange="wsToggleEnabled()">
-        <span>Activar central compartida (sincroniza este dispositivo con la nube)</span>
-      </label>
-      <div class="sb-btn-row" style="margin-top:.5rem">
-        <button class="btn-backup" onclick="wsManualPull()">⬇ Traer ahora</button>
-        <button class="btn-backup" onclick="wsManualPush()">⬆ Guardar ahora</button>
-      </div>
-      <div class="sb-status" id="wsStatus"></div>
+      <div id="srPanel"></div>
     </div>
   </div>
 </div>
@@ -8601,555 +8594,28 @@ if (document.readyState === 'loading') {
 
 
 // ════════════════════════════════════════════════════════════════════
-// WORKSPACE.JS — Central COMPARTIDA (Fase 3) — estado completo en la nube
-// ════════════════════════════════════════════════════════════════════
-//
-// 🆕 v25f — DOS O MÁS DISPOSITIVOS, UNA CENTRAL
-//
-//   FIX v25f — CONFLICTO POR DESACTUALIZACIÓN (segundo plano):
-//   Con dos apps abiertas y una sola persona trabajando, el equipo que
-//   quedaba en segundo plano congelaba sus timers y perdía el websocket
-//   de Realtime, así que NO se enteraba de los cambios del otro. Al volver
-//   a él y editar, lo hacías sobre una base vieja y al guardar saltaba el
-//   "conflicto" — real para el guardia de rev, pero falso para vos (las
-//   ediciones eran secuenciales, no se pisaban). Soluciones:
-//     • Al volver la app al frente (visibilitychange visible): re-suscribir
-//       Realtime y traer lo último si no hay cambios locales sin guardar.
-//     • Sondeo de respaldo de 5min → 45s, con chequeo de rev liviano
-//       (wsPull baja solo el rev y descarga el payload solo si avanzó).
-//     • initialStockLoaded excluido de la detección de cambios (flag de UI
-//       derivado; causaba un push espurio en equipos recién sincronizados).
-//   IMPORTANTE: el modelo sigue siendo de ESTADO COMPLETO POR TURNOS (no
-//   es multi-master con merge campo a campo). Es seguro y correcto si se
-//   edita de a un equipo por vez. Si dos editan EXACTAMENTE a la vez sobre
-//   la misma base, el guardia muestra el conflicto a propósito (no se hace
-//   merge automático de stock para no arriesgar cantidades mal mezcladas).
-//
-//   FIX v25e — CONFLICTO FANTASMA:
-//   La detección de cambios hasheaba el payload COMPLETO, que incluye
-//   `_exportedAt` (la hora del build). Como ese campo cambia en cada
-//   llamada, el hash daba SIEMPRE distinto aunque los datos fueran
-//   idénticos → wsPush nunca devolvía 'unchanged', subía cada 15s
-//   inflando el rev, y el guardia de Realtime creía que siempre había
-//   cambios locales sin guardar (así el otro equipo NUNCA auto-traía).
-//   El rev divergía y al siguiente push saltaba el "CONFLICTO" aunque
-//   nadie hubiera tocado nada. Ahora el hash se calcula sobre el estado
-//   REAL, ignorando los campos volátiles (_wsStableHash). Sin cambios
-//   reales → 'unchanged' → no se sube, no se infla rev, no hay conflicto.
-//   Esto además habilita >2 dispositivos: el control por `rev` ya es
-//   N-dispositivos por turnos; lo único que lo rompía era este bug.
-//
-//   Permite que dos (o más) dispositivos compartan el MISMO estado de la
-//   central: stock, precios, multiplicadores, precios China, decisiones,
-//   pedidos recibidos y config del emisor. El estado vive en una fila de
-//   la tabla `workspace` en Supabase y cada dispositivo:
-//     • TRAE (pull) la última versión al abrir y cada 5 min.
-//     • SUBE (push) sus cambios automáticamente (con debounce) y al cerrar.
-//
-//   100% OPT-IN y offline-first. Si "Central compartida" está apagada, o
-//   no hay config/conexión, StockMerger funciona EXACTAMENTE como antes
-//   (todo local). La nube es un extra.
-//
-//   GUARDIA DE VERSIÓN (optimistic concurrency):
-//   Cada fila tiene un `rev` (entero) que sube en cada guardado. Antes de
-//   subir, el UPDATE exige que el `rev` remoto siga siendo el que vimos la
-//   última vez. Si otra persona guardó en el medio, el UPDATE no afecta
-//   filas → detectamos el conflicto y NO pisamos su trabajo a ciegas:
-//   avisamos y dejamos elegir (traer su versión o resguardar la propia).
-//
-//   Pensado para uso POR TURNOS (uno edita, guarda; después el otro, sea
-//   2 o más dispositivos: PCs de la central, el celu del dueño, la compu
-//   de un trabajador desde su casa, etc.). Los conflictos solo aparecen si
-//   dos editan EXACTAMENTE a la vez sobre la misma base; ahí el guardia
-//   actúa. Un dispositivo que solo mira recibe los cambios por Realtime y
-//   nunca dispara conflicto (no tiene cambios locales que subir).
-//
-//   Reutiliza buildBackupPayload()/applyBackupData() de backup.js — el
-//   mismo formato del "Backup completo".
-//
-// ── SQL DE LA TABLA (correr una vez en Supabase) ──
-//   create table if not exists workspace (
-//     id          text primary key,        -- ID de tienda (namespace)
-//     payload     jsonb not null,          -- estado completo (backup full)
-//     rev         bigint not null default 0,
-//     updated_at  timestamptz not null default now()
-//   );
-//   alter table workspace enable row level security;
-//   create policy "workspace_read"   on workspace for select using (true);
-//   create policy "workspace_insert" on workspace for insert with check (true);
-//   create policy "workspace_update" on workspace for update using (true) with check (true);
-//
-// localStorage:
-//   'ws_enabled'  → '1' si la central compartida está activa
-//   'ws_rev'      → último rev conocido (entero)
-//   'ws_lasthash' → hash del último payload subido/traído (para detectar cambios)
-// ════════════════════════════════════════════════════════════════════
-
-let _wsConflict   = false;   // hay un conflicto sin resolver: pausa el auto-push
-let _wsPullTimer  = null;
-let _wsPushTimer  = null;
-let _wsBusy       = false;   // evita solapamiento de operaciones
-
-const WS_PULL_MS = 45 * 1000;     // sondeo de respaldo cada 45 s (rev-peek liviano; v25f)
-const WS_PUSH_MS = 15 * 1000;     // chequeo de cambios cada 15 s
-
-// ── Estado de activación ──
-function wsEnabled() {
-  try { return localStorage.getItem('ws_enabled') === '1'; } catch (e) { return false; }
-}
-function wsGetRev() {
-  try { return parseInt(localStorage.getItem('ws_rev') || '0', 10) || 0; } catch (e) { return 0; }
-}
-function wsSetRev(r) {
-  try { localStorage.setItem('ws_rev', String(r)); } catch (e) {}
-}
-function wsGetLastHash() {
-  try { return localStorage.getItem('ws_lasthash') || ''; } catch (e) { return ''; }
-}
-function wsSetLastHash(h) {
-  try { localStorage.setItem('ws_lasthash', h); } catch (e) {}
-}
-
-// Hash barato (djb2) para detectar si el estado cambió desde la última vez.
-function _wsHash(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-  return String(h >>> 0) + ':' + str.length;
-}
-
-// Campos volátiles del payload que NO representan un cambio real de datos.
-// `_exportedAt` se estampa con new Date() en cada build → si entra al hash,
-// la detección de cambios da SIEMPRE distinto y dispara conflictos fantasma.
-// `_type` también es metadata (siempre 'full' acá). Los excluimos del hash
-// de detección. (El payload que se SUBE sigue llevando _exportedAt real;
-// solo neutralizamos su efecto en la comparación.) — fix v25e.
-// `initialStockLoaded` es un flag de UI DERIVADO (se recalcula como
-// merged.length>0 al aplicar un backup), no dato compartido real. Como
-// buildBackupPayload reporta el flag guardado pero applyBackupData lo
-// deriva del nº de productos, un equipo recién sincronizado podía quedar
-// "sucio" por este solo campo y disparar un push espurio. Lo excluimos
-// de la detección de cambios. — fix v25f
-const _WS_VOLATILE_KEYS = ['_exportedAt', '_type', 'initialStockLoaded'];
-
-function _wsStableHash(payload) {
-  let obj = payload;
-  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    obj = Object.assign({}, payload);          // clon superficial
-    for (const k of _WS_VOLATILE_KEYS) delete obj[k];
-  }
-  return _wsHash(JSON.stringify(obj));
-}
-
-function _wsBuild() {
-  const payload = buildBackupPayload(false);
-  const json = JSON.stringify(payload);
-  return { payload, json, hash: _wsStableHash(payload) };
-}
-
-// ── Status helper (div #wsStatus) ──
-function wsStatus(msg, type) {
-  const el = document.getElementById('wsStatus');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'sb-status' + (type ? ' sb-status-' + type : '');
-}
-
-// ── TRAER (pull) ──
-// Devuelve { status: 'pulled'|'uptodate'|'empty'|'error', remoteRev? }
-async function wsPull(opts = {}) {
-  const force = !!opts.force;
-  if (!scLibReady() || !scIsConfigured()) return { status: 'error' };
-  const client = scClient();
-  if (!client) return { status: 'error' };
-  const c = scGetConfig();
-
-  try {
-    // Chequeo barato: bajamos solo el rev. Solo si avanzó (o si force)
-    // descargamos el payload completo. Evita bajar todo el stock en cada
-    // sondeo / cada vez que la app vuelve al frente. — v25f
-    if (!force) {
-      const head = await client
-        .from('workspace')
-        .select('rev')
-        .eq('id', c.ns)
-        .maybeSingle();
-      if (head.error) {
-        wsStatus('Error al traer: ' + (head.error.message || 'desconocido'), 'err');
-        return { status: 'error' };
-      }
-      if (!head.data) return { status: 'empty' };
-      const headRev = Number(head.data.rev) || 0;
-      if (headRev <= wsGetRev()) return { status: 'uptodate', remoteRev: headRev };
-    }
-
-    const { data, error } = await client
-      .from('workspace')
-      .select('payload, rev, updated_at')
-      .eq('id', c.ns)
-      .maybeSingle();
-    if (error) {
-      wsStatus('Error al traer: ' + (error.message || 'desconocido'), 'err');
-      return { status: 'error' };
-    }
-    if (!data) return { status: 'empty' };
-
-    const remoteRev = Number(data.rev) || 0;
-    if (!force && remoteRev <= wsGetRev()) {
-      return { status: 'uptodate', remoteRev };
-    }
-
-    // Aplicar la versión remota (sin confirm, con refresco de UI)
-    const ok = applyBackupData(data.payload, { askConfirm: false, render: true });
-    if (!ok) {
-      wsStatus('No se pudo aplicar la versión de la nube.', 'err');
-      return { status: 'error' };
-    }
-    wsSetRev(remoteRev);
-    wsSetLastHash(_wsStableHash(data.payload));
-    _wsConflict = false;
-    const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    wsStatus(`Actualizado desde la nube ${hora} ✓ (v${remoteRev}).`, 'ok');
-    return { status: 'pulled', remoteRev };
-  } catch (e) {
-    wsStatus('Error de red al traer: ' + (e.message || 'sin conexión'), 'err');
-    return { status: 'error' };
-  }
-}
-
-// ── SUBIR (push) con guardia de versión ──
-// Devuelve { status: 'pushed'|'unchanged'|'seeded'|'conflict'|'error' }
-async function wsPush(opts = {}) {
-  const force = !!opts.force;
-  if (!scLibReady() || !scIsConfigured()) return { status: 'error' };
-  if (_wsConflict && !force) return { status: 'conflict' };
-
-  const client = scClient();
-  if (!client) return { status: 'error' };
-  const c = scGetConfig();
-
-  const { payload, hash } = _wsBuild();
-  if (!force && hash === wsGetLastHash()) return { status: 'unchanged' };
-
-  const localRev = wsGetRev();
-  const nowIso = new Date().toISOString();
-
-  try {
-    // UPDATE condicionado: solo si el rev remoto sigue siendo el que vimos.
-    const { data, error } = await client
-      .from('workspace')
-      .update({ payload, rev: localRev + 1, updated_at: nowIso })
-      .eq('id', c.ns)
-      .eq('rev', localRev)
-      .select('rev');
-
-    if (error) {
-      wsStatus('Error al guardar: ' + (error.message || 'desconocido'), 'err');
-      return { status: 'error' };
-    }
-
-    if (data && data.length === 1) {
-      // Éxito normal
-      wsSetRev(localRev + 1);
-      wsSetLastHash(hash);
-      _wsConflict = false;
-      const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      wsStatus(`Guardado en la nube ${hora} ✓ (v${localRev + 1}).`, 'ok');
-      return { status: 'pushed' };
-    }
-
-    // 0 filas afectadas: o no existe la fila aún, o cambió el rev (conflicto).
-    const { data: existing, error: exErr } = await client
-      .from('workspace')
-      .select('rev')
-      .eq('id', c.ns)
-      .maybeSingle();
-    if (exErr) {
-      wsStatus('Error al verificar la nube: ' + (exErr.message || 'desconocido'), 'err');
-      return { status: 'error' };
-    }
-
-    if (!existing) {
-      // Primera vez: sembrar la fila.
-      const { error: insErr } = await client
-        .from('workspace')
-        .insert({ id: c.ns, payload, rev: 1, updated_at: nowIso });
-      if (insErr) {
-        // Posible carrera: otro dispositivo la sembró. Traer y reintentar luego.
-        await wsPull({ force: true });
-        return { status: 'conflict' };
-      }
-      wsSetRev(1);
-      wsSetLastHash(hash);
-      _wsConflict = false;
-      wsStatus('Central publicada en la nube por primera vez ✓ (v1).', 'ok');
-      return { status: 'seeded' };
-    }
-
-    // CONFLICTO: la otra persona guardó en el medio.
-    _wsConflict = true;
-    wsStatus('⚠️ Conflicto: la otra persona guardó cambios. Resolvé antes de seguir.', 'err');
-    _wsHandleConflict();
-    return { status: 'conflict' };
-  } catch (e) {
-    wsStatus('Error de red al guardar: ' + (e.message || 'sin conexión'), 'err');
-    return { status: 'error' };
-  }
-}
-
-// Diálogo de conflicto — no pisa nada a ciegas.
-function _wsHandleConflict() {
-  const traer = confirm(
-    '⚠️ CENTRAL COMPARTIDA — CONFLICTO\n\n' +
-    'La otra persona guardó cambios en la central mientras editabas.\n\n' +
-    'Para no pisar su trabajo:\n' +
-    '• Aceptar = TRAER su versión ahora (se pierden tus cambios sin guardar).\n' +
-    '• Cancelar = quedarte como estás. Exportá un "Backup completo" para no ' +
-    'perder lo tuyo, y después tocá "Traer ahora" cuando estés listo.\n\n' +
-    '(Mientras no se resuelva, no se sube nada automáticamente.)'
-  );
-  if (traer) {
-    wsPull({ force: true }).then(r => {
-      if (r.status === 'pulled' || r.status === 'uptodate') {
-        _wsConflict = false;
-        toast('Traje la versión de la otra persona. Revisá y volvé a hacer tu cambio.', 'ok');
-      }
-    });
-  } else {
-    toast('Conflicto en pausa. Exportá un backup y luego tocá "Traer ahora".', 'err');
-  }
-}
-
-// ── Loops automáticos ──
-function _wsStartLoops() {
-  _wsStopLoops();
-  _wsPullTimer = setInterval(() => { if (!_wsBusy) wsPull(); }, WS_PULL_MS);
-  _wsPushTimer = setInterval(() => {
-    if (_wsBusy || _wsConflict) return;
-    wsPush(); // no-op si nada cambió
-  }, WS_PUSH_MS);
-}
-function _wsStopLoops() {
-  if (_wsPullTimer) { clearInterval(_wsPullTimer); _wsPullTimer = null; }
-  if (_wsPushTimer) { clearInterval(_wsPushTimer); _wsPushTimer = null; }
-}
-
-// Subir al ocultar la pestaña (cierre/cambio de app) — best effort.
-document.addEventListener('visibilitychange', () => {
-  if (!wsEnabled()) return;
-
-  // Al irse a segundo plano: subir cambios pendientes antes de que el
-  // navegador congele la pestaña.
-  if (document.visibilityState === 'hidden') {
-    if (!_wsConflict) wsPush();
-    return;
-  }
-
-  // Al volver al frente: en segundo plano el navegador móvil congela los
-  // timers y suele CORTAR el websocket de Realtime, así que este equipo
-  // pudo quedar DESACTUALIZADO sin enterarse. Re-suscribimos Realtime y
-  // traemos lo último (solo si no hay cambios locales sin guardar). Así
-  // editás siempre sobre la base más nueva y se evita el "conflicto" que
-  // aparecía por estar viejo, no por haber editado el otro equipo. — v25f
-  if (document.visibilityState === 'visible' && !_wsConflict) {
-    if (typeof rtStartCentral === 'function') rtStartCentral();
-    try {
-      const { hash } = _wsBuild();
-      if (hash === wsGetLastHash() && !_wsBusy) wsPull();
-    } catch (e) {}
-  }
-});
-
-// Al RECUPERAR la conexión: si la sync nunca arrancó (abriste sin internet),
-// arrancala ahora; si ya andaba, re-suscribí Realtime y ponete al día (sin
-// pisar cambios locales sin guardar). — v25f
-window.addEventListener('online', () => {
-  if (!wsEnabled() || !scIsConfigured()) return;
-  if (typeof rtStartCentral === 'function') rtStartCentral();
-  if (!_wsPullTimer) { _wsBootWhenReady(); return; }
-  if (!_wsConflict) {
-    try {
-      const { hash } = _wsBuild();
-      if (hash === wsGetLastHash() && !_wsBusy) wsPull();
-    } catch (e) {}
-  }
-});
-
-// Arranque de la sincronización (cuando está activada).
-async function _wsBoot() {
-  if (!wsEnabled() || !scIsConfigured() || !scLibReady()) return;
-  _wsBusy = true;
-  try {
-    const r = await wsPull({ force: false });
-    if (r.status === 'empty') {
-      // No hay central en la nube todavía: sembrar con lo local si hay algo.
-      if (state.merged.length || Object.keys(state.prices).length) {
-        await wsPush({ force: true });
-      } else {
-        wsStatus('Central compartida activa. Sin datos en la nube todavía.', '');
-      }
-    }
-  } finally {
-    _wsBusy = false;
-  }
-  _wsStartLoops();
-}
-
-// Arranca _wsBoot en cuanto la librería de la nube esté lista. Si al abrir
-// todavía no cargó (red lenta / CDN), REINTENTA en vez de abandonar para
-// siempre (antes: un setTimeout fijo de 2s; si no estaba lista, la sync no
-// arrancaba hasta el próximo cambio de foco). — v25f
-function _wsBootWhenReady(attempt = 0) {
-  if (!wsEnabled() || !scIsConfigured()) return;
-  if (_wsPullTimer) return;                 // ya está andando
-  if (scLibReady()) { _wsBoot(); return; }  // lista → traer de la nube y arrancar
-  if (attempt >= 20) {                      // ~30s de reintentos
-    wsStatus('Central compartida: la nube no cargó. Reintentará al volver la conexión.', '');
-    return;
-  }
-  setTimeout(() => _wsBootWhenReady(attempt + 1), 1500);
-}
-
-// ── Acciones manuales (botones) ──
-async function wsManualPull() {
-  if (!wsEnabled()) { toast('Activá primero "Central compartida".', 'err'); return; }
-  _wsBusy = true;
-  const r = await wsPull({ force: true });
-  _wsBusy = false;
-  if (r.status === 'empty') { toast('No hay central publicada en la nube todavía.', 'err'); }
-  else if (r.status === 'pulled') { toast('Central actualizada desde la nube ✓', 'ok'); }
-  else if (r.status === 'uptodate') { toast('Ya tenías la última versión ✓', 'ok'); }
-}
-async function wsManualPush() {
-  if (!wsEnabled()) { toast('Activá primero "Central compartida".', 'err'); return; }
-  _wsBusy = true;
-  const r = await wsPush({ force: true });
-  _wsBusy = false;
-  if (r.status === 'pushed' || r.status === 'seeded') toast('Central guardada en la nube ✓', 'ok');
-  else if (r.status === 'conflict') { /* el diálogo ya avisó */ }
-}
-
-// ── Activar / desactivar desde el checkbox ──
-async function wsToggleEnabled() {
-  const cb = document.getElementById('wsEnabledChk');
-  const wantOn = cb ? cb.checked : !wsEnabled();
-
-  if (wantOn) {
-    if (!scIsConfigured()) {
-      toast('Primero configurá la nube (URL + key) arriba.', 'err');
-      if (cb) cb.checked = false;
-      return;
-    }
-    if (!scLibReady()) {
-      toast('La librería de la nube no cargó (¿sin internet?).', 'err');
-      if (cb) cb.checked = false;
-      return;
-    }
-    // Mirar si ya hay una central en la nube
-    _wsBusy = true;
-    const peek = await wsPull({ force: false });
-    _wsBusy = false;
-
-    if (peek.status === 'pulled' || peek.status === 'uptodate') {
-      // Ya existe central remota: este dispositivo la adopta.
-      if (!confirm(
-        'Al activar la central compartida, este dispositivo va a ADOPTAR la ' +
-        'central de la nube y reemplazar los datos locales.\n\n' +
-        'Si tenés datos locales que NO están en la nube, cancelá y exportá un ' +
-        '"Backup completo" primero.\n\n¿Activar y adoptar la versión de la nube?'
-      )) { if (cb) cb.checked = false; return; }
-      // peek ya aplicó si trajo algo; forzamos pull para asegurar
-      await wsPull({ force: true });
-    } else if (peek.status === 'empty') {
-      // No hay central remota: este dispositivo la siembra con lo local.
-      if (!confirm(
-        'No hay una central compartida en la nube todavía.\n\n' +
-        'Al activar, este dispositivo va a PUBLICAR su estado actual como la ' +
-        'central compartida inicial.\n\n¿Continuar?'
-      )) { if (cb) cb.checked = false; return; }
-    }
-
-    try { localStorage.setItem('ws_enabled', '1'); } catch (e) {}
-    if (peek.status === 'empty') await wsPush({ force: true });
-    _wsStartLoops();
-    wsStatus('Central compartida ACTIVADA ✓', 'ok');
-    toast('Central compartida activada — los cambios se sincronizan solos.', 'ok');
-  } else {
-    try { localStorage.removeItem('ws_enabled'); } catch (e) {}
-    _wsStopLoops();
-    _wsConflict = false;
-    wsStatus('Central compartida desactivada. La app vuelve a ser 100% local.', '');
-    toast('Central compartida desactivada.', 'ok');
-  }
-  wsRenderUI();
-  // (Re)suscribir/cancelar el canal Realtime de workspace según el nuevo estado.
-  if (typeof rtStartCentral === 'function') rtStartCentral();
-}
-
-// ── UI ──
-function wsRenderUI() {
-  const cb = document.getElementById('wsEnabledChk');
-  if (cb) cb.checked = wsEnabled();
-}
-
-function wsInitUI() {
-  wsRenderUI();
-  if (!scLibReady()) {
-    wsStatus('Modo offline: la central compartida no cargó. La app funciona local.', '');
-  } else if (wsEnabled() && scIsConfigured()) {
-    wsStatus('Central compartida activa. Sincronizando…', '');
-    _wsBootWhenReady();
-  } else if (!scIsConfigured()) {
-    wsStatus('Configurá la nube arriba para poder activar la central compartida.', '');
-  } else {
-    wsStatus('Central compartida apagada (opcional). Activala para compartir entre 2 o más dispositivos.', '');
-  }
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', wsInitUI);
-} else {
-  wsInitUI();
-}
-
-
-// ════════════════════════════════════════════════════════════════════
 // REALTIME.JS — StockMerger — tiempo real (Supabase Realtime)
 // ════════════════════════════════════════════════════════════════════
 //
-// Abre canales websocket que avisan al INSTANTE de:
-//   1. PEDIDOS nuevos (tabla orders) → dispara pullOrders() → el pedido
-//      aparece solo en la pestaña Pedidos, sin tocar "☁⬇ De la nube".
-//   2. CENTRAL COMPARTIDA (tabla workspace) → dispara wsPull() → la otra
-//      PC ve los cambios en segundos en vez de esperar el ciclo de 5 min.
+// Abre un canal websocket que avisa al INSTANTE de PEDIDOS nuevos (tabla
+// orders) → dispara pullOrders() → el pedido aparece solo en la pestaña
+// Pedidos, sin tocar "☁⬇ De la nube".
 //
-// Son DISPARADORES: el dato real lo bajan pullOrders()/wsPull() por REST
-// (el estado completo de workspace supera los 256 KB de Realtime, así que
-// nunca dependemos del contenido del evento, solo de la señal).
+// La central compartida entre dispositivos la maneja sync_rows.js
+// (sincronización fila por fila). Acá ya NO se sincroniza el estado
+// completo (eso fue retirado en la Etapa 4).
 //
-// Guardas importantes para central compartida:
-//   • No auto-traer si hay cambios LOCALES sin subir (no pisar tu trabajo);
-//     el guardia de versión (rev) ya maneja ese caso al guardar.
-//   • El evento de tu propia subida no genera bucle: tras push, rev local
-//     queda al día y wsPull() devuelve 'uptodate' (no hace nada).
-//
-// Degradado seguro: si Realtime no está habilitado en las tablas, no llegan
-// eventos y todo sigue con los botones + el sondeo de respaldo.
-//
-// Habilitar en Supabase (una vez):
-//   alter publication supabase_realtime add table orders, workspace;
+// Habilitar en Supabase (una vez): alter publication supabase_realtime
+//   add table orders;  (las tablas de sync_rows ya se habilitaron aparte)
 // ════════════════════════════════════════════════════════════════════
 
-let _rtOrdersCh = null, _rtWsCh = null;
-let _rtOrdersDeb = null, _rtWsDeb = null;
+let _rtOrdersCh = null;
+let _rtOrdersDeb = null;
 
 function rtStopCentral() {
   const client = (typeof scClient === 'function') ? scClient() : null;
-  if (client) {
-    if (_rtOrdersCh) { try { client.removeChannel(_rtOrdersCh); } catch (e) {} }
-    if (_rtWsCh)     { try { client.removeChannel(_rtWsCh); }     catch (e) {} }
-  }
+  if (client && _rtOrdersCh) { try { client.removeChannel(_rtOrdersCh); } catch (e) {} }
   _rtOrdersCh = null;
-  _rtWsCh = null;
 }
 
 function rtStartCentral() {
@@ -9172,32 +8638,7 @@ function rtStartCentral() {
       })
     .subscribe();
 
-  // 2) Central compartida (solo si está activada)
-  if (typeof wsEnabled === 'function' && wsEnabled()) {
-    _rtWsCh = client
-      .channel('rt-ws-' + c.ns)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'workspace', filter: 'id=eq.' + c.ns },
-        () => {
-          clearTimeout(_rtWsDeb);
-          _rtWsDeb = setTimeout(_rtWsMaybePull, 1000);
-        })
-      .subscribe();
-  }
-}
-
-// Trae la central compartida SOLO si no hay cambios locales sin guardar.
-function _rtWsMaybePull() {
-  if (typeof wsPull !== 'function') return;
-  // Si hay cambios locales sin subir, no auto-traer (no pisar tu trabajo).
-  // El guardia de rev detectará el conflicto cuando intentes guardar.
-  try {
-    if (typeof _wsBuild === 'function' && typeof wsGetLastHash === 'function') {
-      const { hash } = _wsBuild();
-      if (hash !== wsGetLastHash()) return;
-    }
-  } catch (e) {}
-  wsPull();
+  // (La central compartida ahora la maneja sync_rows.js, fila por fila.)
 }
 
 // Arrancar al cargar (si ya está configurado) y reintentar tras configurar.
@@ -11542,7 +10983,9 @@ const SR_SWEEP_MS = 20000;   // barrido periódico (red de seguridad)
 const SR_SETTING_KEYS = ['distribuidorFactor', 'colAx', 'colAx2'];
 
 function srEnabled() {
-  try { return localStorage.getItem(SR_FLAG) === '1'; } catch (e) { return false; }
+  // Etapa 4: el sync por filas es el mecanismo de central por defecto.
+  // Solo un '0' explícito lo apaga (botón). null/'1' = activo.
+  try { return localStorage.getItem(SR_FLAG) !== '0'; } catch (e) { return true; }
 }
 function _srDevice() {
   try {
@@ -11898,12 +11341,9 @@ async function srBoot() {
   if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
   if (typeof scLibReady !== 'function' || !scLibReady()) { setTimeout(srBoot, 1500); return; }
 
-  // Apagar la central vieja (fila-gigante) para que no peleen.
-  try {
-    localStorage.setItem('ws_enabled', '0');
-    const chk = document.getElementById('wsEnabledChk'); if (chk) chk.checked = false;
-    if (typeof _wsStopLoops === 'function') _wsStopLoops();
-  } catch (e) {}
+  // La central vieja (fila-gigante) fue retirada en la Etapa 4. Por las
+  // dudas dejamos su flag apagado si quedó algo viejo en este dispositivo.
+  try { localStorage.setItem('ws_enabled', '0'); } catch (e) {}
 
   _srBooted = true;
   _srSetStatus('Sync por filas: sincronizando…', '');
@@ -11948,7 +11388,7 @@ function srToggle() {
     srStopRealtime();
     clearInterval(_srSweepT); clearTimeout(_srFlushT);
     _srBooted = false;
-    _srSetStatus('Sync por filas apagada. (Para compartir, activá la central o volvé a encender esto.)', '');
+    _srSetStatus('Central compartida apagada en este dispositivo. Tocá el botón para volver a activarla.', '');
   }
   _srRenderToggle();
 }
@@ -11963,10 +11403,8 @@ function _srRenderToggle() {
   if (btn) btn.textContent = srEnabled() ? '🧪 Sync por filas: ACTIVA (tocá para apagar)' : '🧪 Sync por filas (beta): activar';
 }
 function srInitUI() {
-  const anchor = document.getElementById('wsStatus');
-  if (!anchor || document.getElementById('srToggleBtn')) return;
-  const wrap = document.createElement('div');
-  wrap.style.marginTop = '10px';
+  const panel = document.getElementById('srPanel');
+  if (!panel || document.getElementById('srToggleBtn')) return;
   const btn = document.createElement('button');
   btn.id = 'srToggleBtn';
   btn.className = 'btn';
@@ -11974,10 +11412,9 @@ function srInitUI() {
   btn.onclick = srToggle;
   const st = document.createElement('div');
   st.id = 'srStatus'; st.className = 'sb-status';
-  wrap.appendChild(btn); wrap.appendChild(st);
-  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+  panel.appendChild(btn); panel.appendChild(st);
   _srRenderToggle();
-  if (srEnabled()) { _srSetStatus('Sync por filas activa — sincronizando al abrir…', ''); }
+  if (srEnabled()) _srSetStatus('Sync por filas activa — sincronizando al abrir…', '');
 }
 
 if (document.readyState === 'loading') {
