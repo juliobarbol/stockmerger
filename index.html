@@ -11567,7 +11567,7 @@ function _fp() {
   return _srFp;
 }
 function _saveFp() { try { localStorage.setItem(SR_FP, JSON.stringify(_fp())); } catch (e) {} }
-function _hash(o) { const s = JSON.stringify(o); let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0) + ':' + s.length; }
+function _hash(o) { const s = JSON.stringify(o === undefined ? null : o); let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0) + ':' + s.length; }
 function _nowIso() { return new Date().toISOString(); }
 
 // ════════════════════════════════════════════════════════════════════
@@ -11799,14 +11799,33 @@ async function srPullAll() {
 // ════════════════════════════════════════════════════════════════════
 // REALTIME (una suscripción por tabla)
 // ════════════════════════════════════════════════════════════════════
+function _localContent(col, k) {
+  if (col === 'catalog')  return _catContent(k);
+  if (col === 'multi')    return _multiContent(k);
+  if (col === 'settings') return _settingValue(k);
+  const o = (state.receivedOrders || []).find(x => x.localId === k);
+  return o || null;
+}
+
 function _srApplyIncoming(col, row) {
   const fp = _fp();
   const keyName = { catalog: 'item_key', multi: 'rubro', settings: 'key', orders: 'local_id' }[col];
   const k = row[keyName];
   const prev = fp[col][k];
-  // LWW: ignorar filas iguales o más viejas que lo que ya tenemos
+
+  // ⚠️ Anti-clobber (fix): si tengo una edición LOCAL sin subir en esta misma
+  // fila, NO la piso con lo que llega. Dejo que mi flush la suba: como llevará
+  // una marca de tiempo más nueva, gana por ser la más reciente (LWW correcto).
+  // Sin esto, el que subía primero pisaba la edición del segundo.
+  if (prev && prev.h !== _hash(_localContent(col, k))) {
+    srScheduleFlush();
+    return;
+  }
+
+  // LWW normal: ignorar filas iguales o más viejas que lo último sincronizado.
   if (prev && prev.ts && row.updated_at && row.updated_at <= prev.ts) return;
-  if (col === 'catalog')  _applyCatRow(row);
+
+  if (col === 'catalog')       _applyCatRow(row);
   else if (col === 'multi')    _applyMultiRow(row);
   else if (col === 'settings') _applySettingRow(row);
   else if (col === 'orders')   _applyOrderRow(row);
