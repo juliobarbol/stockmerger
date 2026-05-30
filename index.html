@@ -11509,6 +11509,464 @@ function _renderSinVentas(data) {
   return html;
 }
 
+
+// ════════════════════════════════════════════════════════════════════
+// SYNC_ROWS.JS — Sincronización FILA POR FILA (beta)  ·  Etapa 2
+// ════════════════════════════════════════════════════════════════════
+//
+//   Reemplaza la "central compartida" de fila-gigante por sincronización
+//   por entidad: cada producto, rubro, ajuste y pedido es su propia fila
+//   en Supabase. Dos personas que editan entidades distintas NO chocan.
+//   Conflicto solo si tocan la MISMA fila → gana el más reciente (LWW),
+//   resuelto por el trigger del servidor. Sin cartel de conflicto.
+//
+//   OFF POR DEFECTO. No hace NADA hasta que lo actives con el botón
+//   "🧪 Sync por filas" que aparece en la sección de nube. Cuando lo
+//   activás, apaga la central vieja (ws_enabled=0) y toma el control.
+//   Si lo apagás, vuelve la central vieja. localStorage y el funcionamiento
+//   offline NO se tocan: la app sigue andando igual sin conexión.
+//
+//   Detección de cambios por DIFF contra "lo último sincronizado"
+//   (huellas por clave). No depende de enganchar cada mutación: un barrido
+//   periódico + flush al guardar/volver al frente capturan todo.
+//
+//   Tablas (creadas en la Etapa 1): catalog_items, rubro_multipliers,
+//   settings, received_orders. ns = scGetConfig().ns.
+// ════════════════════════════════════════════════════════════════════
+
+const SR_FLAG     = 'syncrows_on';
+const SR_FP       = 'syncrows_fp';
+const SR_SEEDED   = 'syncrows_seeded';
+const SR_FLUSH_MS = 4000;    // debounce de subida tras un cambio
+const SR_SWEEP_MS = 20000;   // barrido periódico (red de seguridad)
+const SR_SETTING_KEYS = ['distribuidorFactor', 'colAx', 'colAx2'];
+
+function srEnabled() {
+  try { return localStorage.getItem(SR_FLAG) === '1'; } catch (e) { return false; }
+}
+function _srDevice() {
+  try {
+    let d = localStorage.getItem('ws_device');
+    if (!d) { d = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); localStorage.setItem('ws_device', d); }
+    return d;
+  } catch (e) { return 'd0'; }
+}
+
+let _srBooted = false, _srWrapped = false, _srPushing = false;
+let _srFlushT = null, _srSweepT = null, _srRenderT = null;
+let _srChans = [];
+let _srFp = null;
+
+// ── Huellas persistidas: { catalog:{key:{h,ts}}, multi:{}, settings:{}, orders:{} } ──
+function _fp() {
+  if (!_srFp) { try { _srFp = JSON.parse(localStorage.getItem(SR_FP) || '{}'); } catch (e) { _srFp = {}; } }
+  _srFp.catalog  = _srFp.catalog  || {};
+  _srFp.multi    = _srFp.multi    || {};
+  _srFp.settings = _srFp.settings || {};
+  _srFp.orders   = _srFp.orders   || {};
+  return _srFp;
+}
+function _saveFp() { try { localStorage.setItem(SR_FP, JSON.stringify(_fp())); } catch (e) {} }
+function _hash(o) { const s = JSON.stringify(o); let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0) + ':' + s.length; }
+function _nowIso() { return new Date().toISOString(); }
+
+// ════════════════════════════════════════════════════════════════════
+// MAPEO  estado ↔ fila
+// ════════════════════════════════════════════════════════════════════
+
+// catalog_items — contenido lógico de un producto (sin updated_at)
+function _catContent(key) {
+  const m = state.merged.find(r => r._key === key) || null;
+  return {
+    product:        m ? (m.product || '') : '',
+    qty:            m ? (m.qty || 0) : 0,
+    marca:          m ? (m.extraA || '') : '',
+    rubro:          m ? (m.extraA2 || '') : '',
+    price_override: (state.prices && state.prices[key]) || null,
+    china_price:    (state.chinaPrices && state.chinaPrices[key] != null) ? state.chinaPrices[key] : null,
+    china_source:   (state.chinaSources && state.chinaSources[key]) || null,
+    min_stock:      (state.minStock && state.minStock[key] != null) ? state.minStock[key] : null,
+  };
+}
+function _catKeys() {
+  const ks = new Set();
+  (state.merged || []).forEach(r => ks.add(r._key));
+  Object.keys(state.prices || {}).forEach(k => ks.add(k));
+  Object.keys(state.chinaPrices || {}).forEach(k => ks.add(k));
+  Object.keys(state.minStock || {}).forEach(k => ks.add(k));
+  return [...ks];
+}
+function _catRow(ns, key, c) {
+  return { ns, item_key: key, product: c.product, qty: c.qty, marca: c.marca, rubro: c.rubro,
+           price_override: c.price_override, china_price: c.china_price, china_source: c.china_source,
+           min_stock: c.min_stock, deleted: false, updated_at: _nowIso(), updated_by: _srDevice() };
+}
+// aplica una fila catalog entrante al estado local
+function _applyCatRow(row) {
+  const key = row.item_key;
+  if (row.deleted) {
+    const i = state.merged.findIndex(r => r._key === key);
+    if (i >= 0) state.merged.splice(i, 1);
+    if (state.prices)       delete state.prices[key];
+    if (state.chinaPrices)  delete state.chinaPrices[key];
+    if (state.chinaSources) delete state.chinaSources[key];
+    if (state.minStock)     delete state.minStock[key];
+  } else {
+    let m = state.merged.find(r => r._key === key);
+    if (!m) { m = { _key: key }; state.merged.push(m); }
+    m.product = row.product || '';
+    m.qty     = row.qty != null ? row.qty : 0;
+    m.total   = m.qty;
+    m.extraA  = row.marca || '';
+    m.extraA2 = row.rubro || '';
+    if (row.price_override != null) state.prices[key] = row.price_override; else delete state.prices[key];
+    if (row.china_price != null)    state.chinaPrices[key] = row.china_price; else delete state.chinaPrices[key];
+    if (row.china_source != null)   state.chinaSources[key] = row.china_source; else delete state.chinaSources[key];
+    if (row.min_stock != null)      state.minStock[key] = row.min_stock; else delete state.minStock[key];
+  }
+  // persistir local sin disparar flush (las save están envueltas, pero el fp
+  // ya quedará igual al contenido → el diff no encontrará nada que subir)
+  if (typeof saveMerged === 'function')       saveMerged();
+  if (typeof savePrices === 'function')        savePrices();
+  if (typeof saveChinaPrices === 'function')   saveChinaPrices();
+  if (typeof saveMinStock === 'function')      saveMinStock();
+  if (typeof markPricesDirty === 'function')   markPricesDirty();
+}
+
+// rubro_multipliers
+function _multiContent(rubro) { const m = state.rubrosMultis[rubro]; return m ? { l7: m.l7, vip: m.vip } : null; }
+function _multiRow(ns, rubro, c) {
+  const del = !c;
+  return { ns, rubro, l7: c ? c.l7 : null, vip: c ? c.vip : null, deleted: del, updated_at: _nowIso(), updated_by: _srDevice() };
+}
+function _applyMultiRow(row) {
+  if (row.deleted) delete state.rubrosMultis[row.rubro];
+  else state.rubrosMultis[row.rubro] = { l7: row.l7, vip: row.vip };
+  if (typeof saveRubrosMultis === 'function') saveRubrosMultis();
+}
+
+// settings (clave/valor)
+function _settingValue(key) {
+  if (key === 'distribuidorFactor') return state.distribuidorFactor;
+  if (key === 'colAx')  return state.colAx;
+  if (key === 'colAx2') return state.colAx2;
+  return undefined;
+}
+function _settingRow(ns, key, value) { return { ns, key, value, updated_at: _nowIso(), updated_by: _srDevice() }; }
+function _applySettingRow(row) {
+  if (row.key === 'distribuidorFactor' && row.value != null) state.distribuidorFactor = row.value;
+  else if (row.key === 'colAx')  state.colAx  = row.value || '';
+  else if (row.key === 'colAx2') state.colAx2 = row.value || '';
+  if (typeof saveMerged === 'function') saveMerged(); // colAx/colAx2 viven en mergedstock
+  try { if (row.key === 'distribuidorFactor') localStorage.setItem('distfactor', String(state.distribuidorFactor)); } catch (e) {}
+}
+
+// received_orders
+function _orderContent(o) { return o; } // el pedido completo
+function _orderRow(ns, o) {
+  return { ns, local_id: o.localId, payload: o, status: o.status || null, deleted: false, updated_at: _nowIso(), updated_by: _srDevice() };
+}
+function _applyOrderRow(row) {
+  const id = row.local_id;
+  const i = state.receivedOrders.findIndex(o => o.localId === id);
+  if (row.deleted) { if (i >= 0) state.receivedOrders.splice(i, 1); }
+  else { if (i >= 0) state.receivedOrders[i] = row.payload; else state.receivedOrders.push(row.payload); }
+  if (typeof saveReceivedOrders === 'function') saveReceivedOrders();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FLUSH (subida por diff)
+// ════════════════════════════════════════════════════════════════════
+function srScheduleFlush() {
+  if (!srEnabled()) return;
+  clearTimeout(_srFlushT);
+  _srFlushT = setTimeout(srFlush, SR_FLUSH_MS);
+}
+
+async function srFlush() {
+  if (_srPushing || !srEnabled()) return;
+  if (typeof scLibReady !== 'function' || !scLibReady() || !scIsConfigured()) return;
+  const client = scClient(); if (!client) return;
+  const ns = scGetConfig().ns;
+  _srPushing = true;
+  try {
+    const fp = _fp();
+
+    // ── catalog_items ──
+    const catRows = [];
+    const catSeen = new Set();
+    for (const key of _catKeys()) {
+      catSeen.add(key);
+      const c = _catContent(key); const h = _hash(c);
+      if (!fp.catalog[key] || fp.catalog[key].h !== h) catRows.push({ key, c, h });
+    }
+    const catDel = Object.keys(fp.catalog).filter(k => !catSeen.has(k) && !fp.catalog[k].del);
+    if (catRows.length) {
+      const payload = catRows.map(x => _catRow(ns, x.key, x.c));
+      const { error } = await client.from('catalog_items').upsert(payload, { onConflict: 'ns,item_key' });
+      if (!error) catRows.forEach(x => { fp.catalog[x.key] = { h: x.h, ts: payload[0].updated_at }; });
+    }
+    for (const key of catDel) {
+      const { error } = await client.from('catalog_items').upsert([{ ns, item_key: key, deleted: true, updated_at: _nowIso(), updated_by: _srDevice() }], { onConflict: 'ns,item_key' });
+      if (!error) fp.catalog[key] = { h: '', ts: _nowIso(), del: true };
+    }
+
+    // ── rubro_multipliers ──
+    const multiRows = []; const multiSeen = new Set();
+    for (const rubro of Object.keys(state.rubrosMultis || {})) {
+      multiSeen.add(rubro);
+      const c = _multiContent(rubro); const h = _hash(c);
+      if (!fp.multi[rubro] || fp.multi[rubro].h !== h) multiRows.push({ rubro, c, h });
+    }
+    const multiDel = Object.keys(fp.multi).filter(r => !multiSeen.has(r) && !fp.multi[r].del);
+    if (multiRows.length) {
+      const payload = multiRows.map(x => _multiRow(ns, x.rubro, x.c));
+      const { error } = await client.from('rubro_multipliers').upsert(payload, { onConflict: 'ns,rubro' });
+      if (!error) multiRows.forEach((x, i) => { fp.multi[x.rubro] = { h: x.h, ts: payload[i].updated_at }; });
+    }
+    for (const rubro of multiDel) {
+      const { error } = await client.from('rubro_multipliers').upsert([_multiRow(ns, rubro, null)], { onConflict: 'ns,rubro' });
+      if (!error) fp.multi[rubro] = { h: '', ts: _nowIso(), del: true };
+    }
+
+    // ── settings ──
+    const setRows = [];
+    for (const key of SR_SETTING_KEYS) {
+      const v = _settingValue(key); if (v === undefined) continue;
+      const h = _hash(v);
+      if (!fp.settings[key] || fp.settings[key].h !== h) setRows.push({ key, v, h });
+    }
+    if (setRows.length) {
+      const payload = setRows.map(x => _settingRow(ns, x.key, x.v));
+      const { error } = await client.from('settings').upsert(payload, { onConflict: 'ns,key' });
+      if (!error) setRows.forEach((x, i) => { fp.settings[x.key] = { h: x.h, ts: payload[i].updated_at }; });
+    }
+
+    // ── received_orders ──
+    const ordRows = []; const ordSeen = new Set();
+    for (const o of (state.receivedOrders || [])) {
+      if (!o || !o.localId) continue;
+      ordSeen.add(o.localId);
+      const h = _hash(o);
+      if (!fp.orders[o.localId] || fp.orders[o.localId].h !== h) ordRows.push({ id: o.localId, o, h });
+    }
+    const ordDel = Object.keys(fp.orders).filter(id => !ordSeen.has(id) && !fp.orders[id].del);
+    if (ordRows.length) {
+      const payload = ordRows.map(x => _orderRow(ns, x.o));
+      const { error } = await client.from('received_orders').upsert(payload, { onConflict: 'ns,local_id' });
+      if (!error) ordRows.forEach((x, i) => { fp.orders[x.id] = { h: x.h, ts: payload[i].updated_at }; });
+    }
+    for (const id of ordDel) {
+      const { error } = await client.from('received_orders').upsert([{ ns, local_id: id, payload: {}, deleted: true, updated_at: _nowIso(), updated_by: _srDevice() }], { onConflict: 'ns,local_id' });
+      if (!error) fp.orders[id] = { h: '', ts: _nowIso(), del: true };
+    }
+
+    _saveFp();
+  } catch (e) {
+    console.warn('srFlush:', e.message);
+  } finally {
+    _srPushing = false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PULL inicial (trae todas las filas y arma el estado + huellas)
+// ════════════════════════════════════════════════════════════════════
+async function srPullAll() {
+  const client = scClient(); if (!client) return false;
+  const ns = scGetConfig().ns;
+  const fp = _fp();
+  try {
+    const [ci, rm, st, ro] = await Promise.all([
+      client.from('catalog_items').select('*').eq('ns', ns),
+      client.from('rubro_multipliers').select('*').eq('ns', ns),
+      client.from('settings').select('*').eq('ns', ns),
+      client.from('received_orders').select('*').eq('ns', ns),
+    ]);
+    if (ci.data) ci.data.forEach(row => { if (!row.deleted) _applyCatRow(row); fp.catalog[row.item_key] = { h: _hash(_catContent(row.item_key)), ts: row.updated_at, del: !!row.deleted }; });
+    if (rm.data) rm.data.forEach(row => { if (!row.deleted) _applyMultiRow(row); fp.multi[row.rubro] = { h: _hash(_multiContent(row.rubro)), ts: row.updated_at, del: !!row.deleted }; });
+    if (st.data) st.data.forEach(row => { _applySettingRow(row); fp.settings[row.key] = { h: _hash(_settingValue(row.key)), ts: row.updated_at }; });
+    if (ro.data) ro.data.forEach(row => { if (!row.deleted) _applyOrderRow(row); fp.orders[row.local_id] = { h: _hash(row.payload), ts: row.updated_at, del: !!row.deleted }; });
+    _saveFp();
+    _srScheduleRender();
+    return { catalogEmpty: !ci.data || ci.data.length === 0 };
+  } catch (e) {
+    console.warn('srPullAll:', e.message);
+    return false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// REALTIME (una suscripción por tabla)
+// ════════════════════════════════════════════════════════════════════
+function _srApplyIncoming(col, row) {
+  const fp = _fp();
+  const keyName = { catalog: 'item_key', multi: 'rubro', settings: 'key', orders: 'local_id' }[col];
+  const k = row[keyName];
+  const prev = fp[col][k];
+  // LWW: ignorar filas iguales o más viejas que lo que ya tenemos
+  if (prev && prev.ts && row.updated_at && row.updated_at <= prev.ts) return;
+  if (col === 'catalog')  _applyCatRow(row);
+  else if (col === 'multi')    _applyMultiRow(row);
+  else if (col === 'settings') _applySettingRow(row);
+  else if (col === 'orders')   _applyOrderRow(row);
+  const content = col === 'catalog' ? _catContent(k)
+                : col === 'multi'    ? _multiContent(k)
+                : col === 'settings' ? _settingValue(k)
+                : row.payload;
+  fp[col][k] = { h: _hash(content), ts: row.updated_at, del: !!row.deleted };
+  _saveFp();
+  _srScheduleRender();
+}
+
+function srStartRealtime() {
+  srStopRealtime();
+  const client = scClient(); if (!client) return;
+  const ns = scGetConfig().ns;
+  const subs = [
+    ['catalog_items',     'catalog'],
+    ['rubro_multipliers', 'multi'],
+    ['settings',          'settings'],
+    ['received_orders',   'orders'],
+  ];
+  subs.forEach(([table, col]) => {
+    const ch = client.channel('sr-' + col + '-' + ns)
+      .on('postgres_changes', { event: '*', schema: 'public', table, filter: 'ns=eq.' + ns },
+        (payload) => { if (payload.new) _srApplyIncoming(col, payload.new); })
+      .subscribe();
+    _srChans.push(ch);
+  });
+}
+function srStopRealtime() {
+  const client = scClient();
+  _srChans.forEach(ch => { try { client && client.removeChannel(ch); } catch (e) {} });
+  _srChans = [];
+}
+
+function _srScheduleRender() {
+  clearTimeout(_srRenderT);
+  _srRenderT = setTimeout(() => {
+    if (typeof renderStats === 'function') renderStats();
+    if (typeof applyFilter === 'function') applyFilter();
+    if (typeof renderOrdersTab === 'function') renderOrdersTab();
+    if (typeof renderRubrosTable === 'function') renderRubrosTable();
+    if (typeof renderPricesStats === 'function') renderPricesStats();
+  }, 400);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ENVOLVER las funciones save* para programar un flush tras cada cambio
+// ════════════════════════════════════════════════════════════════════
+function _srWrap(name) {
+  if (typeof window === 'undefined') return;
+  const orig = (typeof globalThis !== 'undefined') ? globalThis[name] : null;
+  if (typeof orig !== 'function') return;
+  globalThis[name] = function () { const r = orig.apply(this, arguments); srScheduleFlush(); return r; };
+}
+function _srWrapSaves() {
+  if (_srWrapped) return;
+  ['saveMerged', 'savePrices', 'saveChinaPrices', 'saveMinStock', 'saveRubrosMultis', 'saveReceivedOrders']
+    .forEach(_srWrap);
+  _srWrapped = true;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ARRANQUE / APAGADO
+// ════════════════════════════════════════════════════════════════════
+async function srBoot() {
+  if (_srBooted) return;
+  if (!srEnabled()) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
+  if (typeof scLibReady !== 'function' || !scLibReady()) { setTimeout(srBoot, 1500); return; }
+
+  // Apagar la central vieja (fila-gigante) para que no peleen.
+  try {
+    localStorage.setItem('ws_enabled', '0');
+    const chk = document.getElementById('wsEnabledChk'); if (chk) chk.checked = false;
+    if (typeof _wsStopLoops === 'function') _wsStopLoops();
+  } catch (e) {}
+
+  _srBooted = true;
+  _srSetStatus('Sync por filas: sincronizando…', '');
+
+  const res = await srPullAll();
+
+  // Siembra: si la nube no tiene productos y este equipo sí, sembrar una vez.
+  const ns = scGetConfig().ns;
+  const seededKey = SR_SEEDED + ':' + ns;
+  if (res && res.catalogEmpty && (state.merged || []).length && localStorage.getItem(seededKey) !== '1') {
+    _srSetStatus('Sync por filas: subiendo el stock por primera vez…', '');
+    // Forzar que el flush considere todo como nuevo (huellas vacías) y subir.
+    _fp().catalog = {}; _fp().multi = {}; _fp().settings = {}; _fp().orders = {};
+    await srFlush();
+    try { localStorage.setItem(seededKey, '1'); } catch (e) {}
+  }
+
+  _srWrapSaves();
+  srStartRealtime();
+
+  clearInterval(_srSweepT);
+  _srSweepT = setInterval(() => { if (srEnabled()) srFlush(); }, SR_SWEEP_MS);
+
+  window.addEventListener('online', () => { if (srEnabled()) { srStartRealtime(); srPullAll(); srFlush(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && srEnabled()) { srStartRealtime(); srPullAll(); }
+    if (document.visibilityState === 'hidden' && srEnabled()) srFlush();
+  });
+
+  _srSetStatus('Sync por filas ACTIVA ✓ (cada producto/rubro/pedido se sincroniza por separado).', 'ok');
+}
+
+function srToggle() {
+  const turningOn = !srEnabled();
+  try { localStorage.setItem(SR_FLAG, turningOn ? '1' : '0'); } catch (e) {}
+  if (turningOn) {
+    _srBooted = false;
+    srBoot();
+  } else {
+    // Apagar: detener realtime y barrido. (La central vieja se puede volver
+    // a activar con su propio checkbox.)
+    srStopRealtime();
+    clearInterval(_srSweepT); clearTimeout(_srFlushT);
+    _srBooted = false;
+    _srSetStatus('Sync por filas apagada. (Para compartir, activá la central o volvé a encender esto.)', '');
+  }
+  _srRenderToggle();
+}
+
+// ── UI: inyectar el botón/estado debajo del bloque de central compartida ──
+function _srSetStatus(msg, type) {
+  const el = document.getElementById('srStatus');
+  if (el) { el.textContent = msg; el.className = 'sb-status' + (type ? ' sb-status-' + type : ''); }
+}
+function _srRenderToggle() {
+  const btn = document.getElementById('srToggleBtn');
+  if (btn) btn.textContent = srEnabled() ? '🧪 Sync por filas: ACTIVA (tocá para apagar)' : '🧪 Sync por filas (beta): activar';
+}
+function srInitUI() {
+  const anchor = document.getElementById('wsStatus');
+  if (!anchor || document.getElementById('srToggleBtn')) return;
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '10px';
+  const btn = document.createElement('button');
+  btn.id = 'srToggleBtn';
+  btn.className = 'btn';
+  btn.style.cssText = 'width:100%;margin-bottom:6px;';
+  btn.onclick = srToggle;
+  const st = document.createElement('div');
+  st.id = 'srStatus'; st.className = 'sb-status';
+  wrap.appendChild(btn); wrap.appendChild(st);
+  anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+  _srRenderToggle();
+  if (srEnabled()) { _srSetStatus('Sync por filas activa — sincronizando al abrir…', ''); }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { srInitUI(); setTimeout(srBoot, 2000); });
+} else {
+  srInitUI(); setTimeout(srBoot, 2000);
+}
+
 </script>
 </body>
 </html>
