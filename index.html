@@ -2360,6 +2360,27 @@ tr.row-lowstock td{background:#f59e0b08}
       </div>
     </div>
 
+    <!-- 🔔 Recordatorio de backup (Capa 1) -->
+    <div id="bkReminder" style="display:none;align-items:center;gap:.6rem;background:#3a2e12;border:1px solid #7a5c1a;border-radius:.5rem;padding:.6rem .7rem;margin-bottom:.6rem">
+      <span style="font-size:1.1rem">🔔</span>
+      <span style="flex:1;font-size:.72rem">Hubo varios cambios. Conviene descargar un backup y guardarlo aparte.</span>
+      <button class="btn-backup btn-backup-primary" style="padding:.4rem .7rem;white-space:nowrap" onclick="bkDownloadNow()">⬇ Descargar</button>
+    </div>
+
+    <!-- ☁ Copias en la nube (Capa 2) -->
+    <div class="backup-section">
+      <div class="section-title">☁ Copias en la nube</div>
+      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">
+        Fotos del estado guardadas en Supabase, fechadas. Si alguien borra o arruina algo,
+        se puede volver a una copia anterior. Se crean solas cada tanto; también podés crear una ahora.
+      </p>
+      <button class="btn-backup btn-backup-primary" onclick="bkSnapshotCreateUI()" style="width:100%;padding:.6rem;margin-bottom:.5rem">
+        <span>📸</span>
+        <span class="btn-backup-name" style="font-size:.8rem">Crear copia ahora</span>
+      </button>
+      <div id="bkList"></div>
+    </div>
+
     <!-- Exportar para vendedores -->
     <div class="backup-section">
       <div class="section-title">👥 Exportar para vendedores</div>
@@ -8385,6 +8406,194 @@ function exportAllVendorLists() {
 // ────────────────────────────────────────────────────────────────────
 function exportForVendor(list) {
   exportAllVendorLists();
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// BACKUPS.JS — Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube)
+// ════════════════════════════════════════════════════════════════════
+//
+//   Miedo a cubrir: que alguien borre o arruine datos por error (y el sync
+//   replique el error a todos). Soluciones:
+//
+//   CAPA 1 — Recordatorio: tras X cambios o X días sin descargar, sugiere
+//            bajar un "Backup completo" al dispositivo (copia FUERA de la
+//            plataforma, en manos de la persona). Reusa exportBackup(false).
+//
+//   CAPA 2 — Snapshots versionados en Supabase (tabla `backups`): fotos del
+//            estado, fechadas. Automáticas (tras X cambios, sin repetir si
+//            ya hay una reciente) y manuales. Restaurar = volver a una foto.
+//            Se conservan las últimas BK_KEEP; las viejas se podan.
+//
+//   Requiere la tabla `backups` (ver SQL Capa 2).
+// ════════════════════════════════════════════════════════════════════
+
+const BK_THRESHOLD = 40;     // cambios para sugerir backup / disparar auto-snapshot
+const BK_REMIND_DAYS = 7;    // o si pasaron estos días sin descargar
+const BK_KEEP = 15;          // snapshots a conservar por tienda
+const BK_MIN_HOURS = 12;     // no auto-snapshot más seguido que esto (entre todos los equipos)
+
+function _bkNum(key) { return parseInt(Store.get(key) || '0', 10) || 0; }
+
+// ── Recuento de cambios ──
+function bkBumpChange() {
+  const n = _bkNum('bk_changes') + 1;
+  Store.set('bk_changes', String(n));
+  if (n >= BK_THRESHOLD) bkMaybeAutoSnapshot();
+  _bkUpdateReminder();
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CAPA 1 — Recordatorio + descarga
+// ════════════════════════════════════════════════════════════════════
+function _bkShouldRemind() {
+  const n = _bkNum('bk_changes');
+  const lastDl = _bkNum('bk_last_download');
+  const days = lastDl ? (Date.now() - lastDl) / 86400000 : Infinity;
+  return n >= BK_THRESHOLD || (lastDl && days >= BK_REMIND_DAYS);
+}
+function _bkUpdateReminder() {
+  const el = document.getElementById('bkReminder');
+  if (!el) return;
+  el.style.display = _bkShouldRemind() ? 'flex' : 'none';
+}
+function bkDownloadNow() {
+  if (typeof exportBackup === 'function') exportBackup(false);
+  Store.set('bk_last_download', String(Date.now()));
+  Store.set('bk_changes', '0');
+  _bkUpdateReminder();
+  if (typeof toast === 'function') toast('Backup descargado. Guardalo en un lugar seguro.', 'ok');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CAPA 2 — Snapshots en Supabase
+// ════════════════════════════════════════════════════════════════════
+function _bkReady() {
+  return typeof scLibReady === 'function' && scLibReady()
+      && typeof scIsConfigured === 'function' && scIsConfigured()
+      && typeof scClient === 'function' && scClient();
+}
+
+async function bkMaybeAutoSnapshot() {
+  if (!_bkReady()) return;
+  const client = scClient(); const ns = scGetConfig().ns;
+  try {
+    // No duplicar: si ya hay una copia reciente (de cualquier equipo), saltar.
+    const { data } = await client.from('backups').select('created_at')
+      .eq('ns', ns).order('created_at', { ascending: false }).limit(1);
+    const lastTs = (data && data[0]) ? new Date(data[0].created_at).getTime() : 0;
+    if (Date.now() - lastTs < BK_MIN_HOURS * 3600000) { Store.set('bk_changes', '0'); return; }
+    await bkSnapshotCreate('auto');
+  } catch (e) { console.warn('auto-snapshot:', e && e.message); }
+}
+
+async function bkSnapshotCreate(kind = 'manual', label) {
+  if (!_bkReady()) return { ok: false, reason: 'sin-nube' };
+  const client = scClient(); const ns = scGetConfig().ns;
+  try {
+    const payload = buildBackupPayload(false);
+    const sizeKb = Math.round(JSON.stringify(payload).length / 1024);
+    const { error } = await client.from('backups').insert({ ns, kind, label: label || null, payload, size_kb: sizeKb });
+    if (error) { console.warn('snapshot:', error.message); return { ok: false }; }
+    Store.set('bk_last_snapshot', String(Date.now()));
+    if (kind === 'auto') Store.set('bk_changes', '0');
+    await _bkPrune(ns);
+    return { ok: true };
+  } catch (e) { console.warn('snapshot:', e && e.message); return { ok: false }; }
+}
+
+async function _bkPrune(ns) {
+  const client = scClient();
+  try {
+    const { data } = await client.from('backups').select('id, created_at')
+      .eq('ns', ns).order('created_at', { ascending: false });
+    if (data && data.length > BK_KEEP) {
+      const viejas = data.slice(BK_KEEP).map(r => r.id);
+      await client.from('backups').delete().in('id', viejas);
+    }
+  } catch (e) {}
+}
+
+async function bkSnapshotList() {
+  if (!_bkReady()) return [];
+  const client = scClient(); const ns = scGetConfig().ns;
+  try {
+    const { data } = await client.from('backups').select('id, kind, label, size_kb, created_at')
+      .eq('ns', ns).order('created_at', { ascending: false }).limit(50);
+    return data || [];
+  } catch (e) { return []; }
+}
+
+async function bkSnapshotRestore(id) {
+  if (!_bkReady()) return false;
+  const client = scClient();
+  try {
+    const { data } = await client.from('backups').select('payload').eq('id', id).maybeSingle();
+    if (!data || !data.payload) return false;
+    // Aplicar el estado de la foto. Esto re-sincroniza por filas (sync_rows
+    // detecta los cambios y los sube), propagando la restauración a todos.
+    applyBackupData(data.payload, { askConfirm: false, render: true });
+    return true;
+  } catch (e) { console.warn('restore:', e && e.message); return false; }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UI
+// ════════════════════════════════════════════════════════════════════
+async function bkRenderList() {
+  const box = document.getElementById('bkList');
+  if (!box) return;
+  if (!_bkReady()) { box.innerHTML = '<div class="sb-status">Configurá la nube para usar copias en la nube.</div>'; return; }
+  box.innerHTML = '<div class="sb-status">Cargando copias…</div>';
+  const list = await bkSnapshotList();
+  if (!list.length) { box.innerHTML = '<div class="sb-status">Todavía no hay copias en la nube.</div>'; return; }
+  box.innerHTML = list.map(b => {
+    const f = new Date(b.created_at);
+    const fecha = f.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const tag = b.kind === 'auto' ? 'auto' : 'manual';
+    return `<div class="bk-item" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border,#333)">
+      <span style="font-size:.75rem">${fecha} <span style="opacity:.6">· ${tag}${b.size_kb ? ' · ' + b.size_kb + 'KB' : ''}</span></span>
+      <button class="btn-backup" style="padding:.3rem .6rem" onclick="bkRestoreUI('${b.id}','${fecha}')">↩ Restaurar</button>
+    </div>`;
+  }).join('');
+}
+
+async function bkSnapshotCreateUI() {
+  if (!_bkReady()) { if (typeof toast === 'function') toast('Configurá la nube primero.', 'err'); return; }
+  if (typeof toast === 'function') toast('Creando copia en la nube…', '');
+  const r = await bkSnapshotCreate('manual');
+  if (r.ok) { if (typeof toast === 'function') toast('Copia creada ✓', 'ok'); bkRenderList(); }
+  else if (typeof toast === 'function') toast('No se pudo crear la copia.', 'err');
+}
+
+async function bkRestoreUI(id, fecha) {
+  const msg = '¿Restaurar la copia del ' + fecha + '?\n\nEsto reemplaza el stock, precios y pedidos actuales por los de esa fecha, en TODOS los equipos. Conviene crear una copia de lo actual antes, por las dudas.';
+  if (!confirm(msg)) return;
+  if (typeof toast === 'function') toast('Restaurando…', '');
+  const ok = await bkSnapshotRestore(id);
+  if (ok) { if (typeof toast === 'function') toast('Restaurado ✓', 'ok'); }
+  else if (typeof toast === 'function') toast('No se pudo restaurar.', 'err');
+}
+
+function bkInitUI() {
+  _bkUpdateReminder();
+  bkRenderList();
+}
+
+// ── Enganchar el recuento de cambios envolviendo las funciones de guardado ──
+(function _bkWrapSaves() {
+  if (typeof globalThis === 'undefined') return;
+  ['saveMerged', 'savePrices', 'saveRubrosMultis', 'saveReceivedOrders', 'saveChinaPrices', 'saveMinStock']
+    .forEach(name => {
+      const orig = globalThis[name];
+      if (typeof orig !== 'function') return;
+      globalThis[name] = function () { const r = orig.apply(this, arguments); try { bkBumpChange(); } catch (e) {} return r; };
+    });
+})();
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(bkInitUI, 1500));
+  else setTimeout(bkInitUI, 1500);
 }
 
 
