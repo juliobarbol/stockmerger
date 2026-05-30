@@ -3169,6 +3169,169 @@ if ('serviceWorker' in navigator) {
 </script>
 <script>
 // ════════════════════════════════════════════════════════════════════
+// STORE.JS — Almacenamiento durable sobre IndexedDB con fachada SÍNCRONA
+// ════════════════════════════════════════════════════════════════════
+//
+//   Problema que resuelve: localStorage tiene un techo de ~5 MB para TODA
+//   la app, y el historial (pedidos, ajustes) crece sin freno. IndexedDB
+//   no tiene ese techo (cientos de MB+).
+//
+//   Cómo: el dato vive en MEMORIA (un Map). La app lo lee/escribe de forma
+//   SÍNCRONA con Store.get()/Store.set() (mismo contrato que localStorage,
+//   así el resto del código no cambia). En segundo plano, lo escrito se
+//   persiste a IndexedDB (write-behind). Al abrir, Store.init() carga todo
+//   IndexedDB al Map una sola vez.
+//
+//   Seguridad:
+//     • Antes de init() (o si IndexedDB falla), get() cae a localStorage,
+//       así las cargas del arranque funcionan igual.
+//     • La PRIMERA vez migra lo que haya en localStorage a IndexedDB.
+//     • localStorage NO se borra: queda como respaldo. Se puede volver a él.
+// ════════════════════════════════════════════════════════════════════
+
+const Store = (function () {
+  const DB_NAME = 'stockmerger_store';
+  const STORE   = 'kv';
+  const DB_VER  = 1;
+
+  let _db = null;
+  let _ready = false;
+  const _mem = new Map();      // cache síncrona: key(string) -> value(string)
+  const _dirty = new Set();    // keys pendientes de persistir a IDB
+  let _flushT = null;
+
+  const _hasIDB = (typeof indexedDB !== 'undefined' && indexedDB);
+  const _hasLS  = (() => { try { return typeof localStorage !== 'undefined'; } catch (e) { return false; } })();
+
+  // ── IndexedDB helpers (promesas) ──
+  function _open() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(DB_NAME, DB_VER);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror   = () => rej(r.error);
+    });
+  }
+  function _idbGetAll(db) {
+    return new Promise((res, rej) => {
+      const out = {};
+      const cur = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
+      cur.onsuccess = e => { const c = e.target.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); };
+      cur.onerror   = () => rej(cur.error);
+    });
+  }
+  function _idbPut(db, key, value) {
+    return new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(value, key);
+      tx.oncomplete = () => res();
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+  function _idbDelete(db, key) {
+    return new Promise((res, rej) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(key);
+      tx.oncomplete = () => res();
+      tx.onerror    = () => rej(tx.error);
+    });
+  }
+
+  function _seedFromLS() {
+    if (!_hasLS) return;
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); _mem.set(k, localStorage.getItem(k)); } } catch (e) {}
+  }
+
+  // ── API pública ──
+  async function init() {
+    if (_ready) return usingIdb();
+    if (!_hasIDB) { _seedFromLS(); _ready = true; return false; } // sin IDB → modo localStorage
+    try {
+      _db = await _open();
+      const all = await _idbGetAll(_db);
+      const keys = Object.keys(all);
+      if (keys.length === 0 && _hasLS) {
+        // Primera vez: migrar localStorage → IndexedDB
+        _seedFromLS();
+        for (const [k, v] of _mem.entries()) { try { await _idbPut(_db, k, v); } catch (e) {} }
+      } else {
+        for (const k of keys) _mem.set(k, all[k]);
+      }
+      _ready = true;
+      return true;
+    } catch (e) {
+      console.warn('Store.init: IndexedDB no disponible, sigo con localStorage:', e && e.message);
+      _db = null; _seedFromLS(); _ready = true;
+      return false;
+    }
+  }
+
+  // Lectura SÍNCRONA. Antes de init() o sin IDB, cae a localStorage.
+  function get(key) {
+    if (_mem.has(key)) return _mem.get(key);
+    if (_hasLS) { try { return localStorage.getItem(key); } catch (e) {} }
+    return null;
+  }
+
+  // Escritura SÍNCRONA en memoria + persistencia en segundo plano.
+  function set(key, value) {
+    value = (value === null || value === undefined) ? '' : String(value);
+    _mem.set(key, value);
+    if (_db) { _dirty.add(key); _scheduleFlush(); }
+    else if (_hasLS) { try { localStorage.setItem(key, value); } catch (e) {} }
+    return true;
+  }
+
+  function remove(key) {
+    _mem.delete(key);
+    if (_db) { _idbDelete(_db, key).catch(() => {}); }
+    else if (_hasLS) { try { localStorage.removeItem(key); } catch (e) {} }
+  }
+
+  function _scheduleFlush() { clearTimeout(_flushT); _flushT = setTimeout(_flush, 300); }
+  async function _flush() {
+    if (!_db || !_dirty.size) return;
+    const keys = [..._dirty]; _dirty.clear();
+    for (const k of keys) {
+      try { await _idbPut(_db, k, _mem.has(k) ? _mem.get(k) : ''); }
+      catch (e) { _dirty.add(k); } // reintentar en el próximo flush
+    }
+  }
+  // Persistencia inmediata (para llamar al cerrar/ocultar la app).
+  function flushNow() {
+    if (!_db || !_dirty.size) return;
+    const keys = [..._dirty]; _dirty.clear();
+    keys.forEach(k => _idbPut(_db, k, _mem.has(k) ? _mem.get(k) : '').catch(() => _dirty.add(k)));
+  }
+
+  function usingIdb() { return !!_db; }
+  function isReady()  { return _ready; }
+  // Solo para diagnóstico/migración: claves y tamaño aproximado en memoria.
+  function _stats() {
+    let bytes = 0; for (const v of _mem.values()) bytes += (v ? v.length : 0);
+    return { keys: _mem.size, approxKB: Math.round(bytes / 1024), idb: usingIdb() };
+  }
+
+  return { init, get, set, remove, flushNow, usingIdb, isReady, _stats };
+})();
+
+// Exponer como global para que el resto de los módulos lo usen.
+if (typeof window !== 'undefined') window.Store = Store;
+if (typeof globalThis !== 'undefined') globalThis.Store = Store;
+
+// Guardar lo pendiente al cerrar/ocultar la pestaña.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Store.flushNow(); });
+  window.addEventListener('pagehide', () => Store.flushNow());
+}
+
+if (typeof module !== 'undefined' && module.exports) module.exports = Store;
+
+
+// ════════════════════════════════════════════════════════════════════
 // STATE.JS — Estado global de la app + persistencia en localStorage
 // ════════════════════════════════════════════════════════════════════
 //
@@ -3279,7 +3442,7 @@ let _chinaMap = null; // Map<normalizedKey, precioChina> — índice O(1)
 const _lastQuotaWarn = {};
 function _safeSetItem(key, value, label) {
   try {
-    localStorage.setItem(key, value);
+    Store.set(key, value);
     return true;
   } catch (e) {
     const isQuota = e && (
@@ -3311,7 +3474,7 @@ function _safeSetItem(key, value, label) {
 
 // ── Min stock ──
 function loadMinStock() {
-  try { state.minStock = JSON.parse(localStorage.getItem('stockmin') || '{}'); }
+  try { state.minStock = JSON.parse(Store.get('stockmin') || '{}'); }
   catch (e) { state.minStock = {}; }
 }
 function saveMinStock() {
@@ -3320,7 +3483,7 @@ function saveMinStock() {
 
 // ── Dup memory ──
 function loadDupMemory() {
-  try { state.dupMemory = JSON.parse(localStorage.getItem('dupmem') || '{}'); }
+  try { state.dupMemory = JSON.parse(Store.get('dupmem') || '{}'); }
   catch (e) { state.dupMemory = {}; }
 }
 function saveDupMemory() {
@@ -3352,7 +3515,7 @@ loadDupMemory();
 
 // ── China prices ──
 function loadChinaPrices() {
-  try { state.chinaPrices = JSON.parse(localStorage.getItem('chinaprices') || '{}'); }
+  try { state.chinaPrices = JSON.parse(Store.get('chinaprices') || '{}'); }
   catch (e) { state.chinaPrices = {}; }
 }
 function saveChinaPrices() {
@@ -3372,7 +3535,7 @@ loadChinaPrices();
 // REGLA: cualquier escritura con source='imported' siempre gana. Los
 // inferidos solo se escriben cuando NO había precio previo.
 function loadChinaSources() {
-  try { state.chinaSources = JSON.parse(localStorage.getItem('chinasources') || '{}'); }
+  try { state.chinaSources = JSON.parse(Store.get('chinasources') || '{}'); }
   catch (e) { state.chinaSources = {}; }
 }
 function saveChinaSources() {
@@ -3392,7 +3555,7 @@ loadChinaSources();
 //   lista:  'l7' | 'vip' — desde cuál Excel se importó
 //   reason: 'no_rubro' | 'no_multi' — por qué quedó pendiente
 function loadInferPending() {
-  try { state.inferPending = JSON.parse(localStorage.getItem('inferpending') || '[]'); }
+  try { state.inferPending = JSON.parse(Store.get('inferpending') || '[]'); }
   catch (e) { state.inferPending = []; }
 }
 function saveInferPending() {
@@ -3438,7 +3601,7 @@ function normalizeRubro(s) {
 
 function loadRubrosMultis() {
   try {
-    const raw = localStorage.getItem('rubrosmultis');
+    const raw = Store.get('rubrosmultis');
     if (raw) {
       state.rubrosMultis = JSON.parse(raw);
     } else {
@@ -3455,7 +3618,7 @@ function saveRubrosMultis() {
 
 function loadDistribuidorFactor() {
   try {
-    const raw = localStorage.getItem('distfactor');
+    const raw = Store.get('distfactor');
     if (raw) {
       const n = parseFloat(raw);
       state.distribuidorFactor = (!isNaN(n) && n > 0) ? n : 2.7;
@@ -3473,7 +3636,7 @@ loadDistribuidorFactor();
 
 // ── Pedidos recibidos de vendedores ──
 function loadReceivedOrders() {
-  try { state.receivedOrders = JSON.parse(localStorage.getItem('receivedorders') || '[]'); }
+  try { state.receivedOrders = JSON.parse(Store.get('receivedorders') || '[]'); }
   catch (e) { state.receivedOrders = []; }
 }
 function saveReceivedOrders() {
@@ -3507,7 +3670,7 @@ const DEFAULT_DOC_CONFIG = {
 
 function loadDocConfig() {
   try {
-    const raw = localStorage.getItem('docconfig');
+    const raw = Store.get('docconfig');
     if (!raw) {
       state.docConfig = JSON.parse(JSON.stringify(DEFAULT_DOC_CONFIG));
       return;
@@ -3569,7 +3732,7 @@ function _migrateStockEntry(r) {
 
 function loadMerged() {
   try {
-    const raw = localStorage.getItem('mergedstock');
+    const raw = Store.get('mergedstock');
     if (!raw) return false;
     const payload = JSON.parse(raw);
     if (!payload.merged || !payload.merged.length) return false;
@@ -3594,7 +3757,7 @@ function loadMerged() {
 }
 
 function clearMerged() {
-  localStorage.removeItem('mergedstock');
+  Store.remove('mergedstock');
   state.merged = [];
   state.filtered = [];
 }
@@ -3623,7 +3786,7 @@ const INGEST_HISTORY_MAX = 50;
 
 function loadIngestHistory() {
   try {
-    const raw = localStorage.getItem('ingesthistory');
+    const raw = Store.get('ingesthistory');
     return raw ? JSON.parse(raw) : [];
   } catch (e) { return []; }
 }
@@ -3670,21 +3833,21 @@ function addIngestHistoryEntry(entry) {
 // ════════════════════════════════════════════════════════════════════
 function loadIngestUndo() {
   try {
-    const raw = localStorage.getItem('ingestundo');
+    const raw = Store.get('ingestundo');
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
 }
 
 function saveIngestUndo(snapshot) {
   if (snapshot == null) {
-    localStorage.removeItem('ingestundo');
+    Store.remove('ingestundo');
     return;
   }
   _safeSetItem('ingestundo', JSON.stringify(snapshot), 'el snapshot de deshacer');
 }
 
 function clearIngestUndo() {
-  localStorage.removeItem('ingestundo');
+  Store.remove('ingestundo');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -3701,14 +3864,14 @@ function clearIngestUndo() {
 // ════════════════════════════════════════════════════════════════════
 function loadInitialStockFlag() {
   try {
-    return localStorage.getItem('initialstockloaded') === '1';
+    return Store.get('initialstockloaded') === '1';
   } catch (e) { return false; }
 }
 
 function setInitialStockFlag(value) {
   try {
-    if (value) localStorage.setItem('initialstockloaded', '1');
-    else       localStorage.removeItem('initialstockloaded');
+    if (value) Store.set('initialstockloaded', '1');
+    else       Store.remove('initialstockloaded');
   } catch (e) {}
 }
 
@@ -3976,7 +4139,7 @@ function saveMapperConfig() {
       colAextra:   document.getElementById('colAextra')?.value   || '',
       colAextra2:  document.getElementById('colAextra2')?.value  || '',
     };
-    localStorage.setItem('mappercfg', JSON.stringify(cfg));
+    Store.set('mappercfg', JSON.stringify(cfg));
   } catch (e) {}
 }
 
@@ -4000,7 +4163,7 @@ function updateMapper() {
 
   // Cargar config guardada
   let saved = {};
-  try { saved = JSON.parse(localStorage.getItem('mappercfg') || '{}'); } catch (e) {}
+  try { saved = JSON.parse(Store.get('mappercfg') || '{}'); } catch (e) {}
 
   populateSelect('colAproduct', state.A.cols, pG);
   populateSelect('colAqty',     state.A.cols, qG);
@@ -5831,7 +5994,8 @@ function escapeHtml(s) {
 }
 
 // ══ RESTAURAR STOCK AL INICIAR ══
-(function restoreStockOnInit() {
+// (La invoca boot.js DESPUÉS de Store.init(), para leer desde IndexedDB.)
+function restoreStockOnInit() {
   // Siempre intentar refrescar el badge de pedidos pendientes al cargar
   if (typeof updateOrdersBadge === 'function') {
     setTimeout(updateOrdersBadge, 0);
@@ -5848,7 +6012,7 @@ function escapeHtml(s) {
   applyFilter();
   if (typeof onStockUpdated === 'function') onStockUpdated();
   setTimeout(() => toast('Stock restaurado — ' + state.merged.length + ' productos', 'ok'), 400);
-})();
+}
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -6024,7 +6188,7 @@ function exportCSV() {
 // ── Persistencia ──
 function loadPrices() {
   try {
-    const raw = localStorage.getItem('pricemulti');
+    const raw = Store.get('pricemulti');
     state.prices = raw ? JSON.parse(raw) : {};
     // Migración v22 → v23: limpiar entradas residuales del modelo viejo
     // (las que solo tienen {label, marca, rubro, act, dist, vip, *_p}
@@ -6038,11 +6202,11 @@ function loadPrices() {
 
 function _migrateOldPricesIfNeeded() {
   // Si ya migramos esta sesión, salir
-  if (localStorage.getItem('pricemulti_v23_migrated') === '1') return;
+  if (Store.get('pricemulti_v23_migrated') === '1') return;
 
   const keys = Object.keys(state.prices);
   if (keys.length === 0) {
-    localStorage.setItem('pricemulti_v23_migrated', '1');
+    Store.set('pricemulti_v23_migrated', '1');
     return;
   }
 
@@ -6069,7 +6233,7 @@ function _migrateOldPricesIfNeeded() {
     savePrices();
     console.log(`[v23 migration] Limpiadas ${migrated} entradas residuales del modelo viejo`);
   }
-  localStorage.setItem('pricemulti_v23_migrated', '1');
+  Store.set('pricemulti_v23_migrated', '1');
 }
 
 function savePrices() {
@@ -7848,7 +8012,7 @@ function exportBackup(settingsOnly = false) {
 }
 
 function _safeParseLS(key) {
-  try { return JSON.parse(localStorage.getItem(key) || 'null'); }
+  try { return JSON.parse(Store.get(key) || 'null'); }
   catch (e) { return null; }
 }
 
@@ -7977,7 +8141,7 @@ function applyBackupData(backup, opts = {}) {
 
       // Mapper config
       if (backup.mapperCfg) {
-        try { localStorage.setItem('mappercfg', JSON.stringify(backup.mapperCfg)); }
+        try { Store.set('mappercfg', JSON.stringify(backup.mapperCfg)); }
         catch (e) { console.warn('No se pudo restaurar mapper config:', e); }
       }
 
@@ -8278,7 +8442,7 @@ let _sbClientKey = '';      // url+anonKey con que se creó (para recrear si cam
 // ── Config ──
 function scGetConfig() {
   try {
-    const raw = localStorage.getItem('sb_config');
+    const raw = Store.get('sb_config');
     if (!raw) return { url: '', anonKey: '', ns: 'default' };
     const c = JSON.parse(raw);
     return {
@@ -8495,7 +8659,7 @@ async function pullOrders() {
 
   const c = scGetConfig();
   const lastPull = (() => {
-    try { return localStorage.getItem('sb_orders_lastpull') || null; } catch (e) { return null; }
+    try { return Store.get('sb_orders_lastpull') || null; } catch (e) { return null; }
   })();
 
   scStatus('Buscando pedidos nuevos en la nube…', '');
@@ -8546,7 +8710,7 @@ async function pullOrders() {
 
     // Avanzar el cursor solo si trajimos algo (incluso duplicados ya vistos)
     if (maxCreated) {
-      try { localStorage.setItem('sb_orders_lastpull', maxCreated); } catch (e) {}
+      try { Store.set('sb_orders_lastpull', maxCreated); } catch (e) {}
     }
 
     if (typeof renderOrdersTab === 'function') renderOrdersTab();
@@ -10985,12 +11149,12 @@ const SR_SETTING_KEYS = ['distribuidorFactor', 'colAx', 'colAx2'];
 function srEnabled() {
   // Etapa 4: el sync por filas es el mecanismo de central por defecto.
   // Solo un '0' explícito lo apaga (botón). null/'1' = activo.
-  try { return localStorage.getItem(SR_FLAG) !== '0'; } catch (e) { return true; }
+  try { return Store.get(SR_FLAG) !== '0'; } catch (e) { return true; }
 }
 function _srDevice() {
   try {
-    let d = localStorage.getItem('ws_device');
-    if (!d) { d = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); localStorage.setItem('ws_device', d); }
+    let d = Store.get('ws_device');
+    if (!d) { d = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); Store.set('ws_device', d); }
     return d;
   } catch (e) { return 'd0'; }
 }
@@ -11002,14 +11166,14 @@ let _srFp = null;
 
 // ── Huellas persistidas: { catalog:{key:{h,ts}}, multi:{}, settings:{}, orders:{} } ──
 function _fp() {
-  if (!_srFp) { try { _srFp = JSON.parse(localStorage.getItem(SR_FP) || '{}'); } catch (e) { _srFp = {}; } }
+  if (!_srFp) { try { _srFp = JSON.parse(Store.get(SR_FP) || '{}'); } catch (e) { _srFp = {}; } }
   _srFp.catalog  = _srFp.catalog  || {};
   _srFp.multi    = _srFp.multi    || {};
   _srFp.settings = _srFp.settings || {};
   _srFp.orders   = _srFp.orders   || {};
   return _srFp;
 }
-function _saveFp() { try { localStorage.setItem(SR_FP, JSON.stringify(_fp())); } catch (e) {} }
+function _saveFp() { try { Store.set(SR_FP, JSON.stringify(_fp())); } catch (e) {} }
 function _hash(o) { const s = JSON.stringify(o === undefined ? null : o); let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0) + ':' + s.length; }
 function _nowIso() { return new Date().toISOString(); }
 
@@ -11101,7 +11265,7 @@ function _applySettingRow(row) {
   else if (row.key === 'colAx')  state.colAx  = row.value || '';
   else if (row.key === 'colAx2') state.colAx2 = row.value || '';
   if (typeof saveMerged === 'function') saveMerged(); // colAx/colAx2 viven en mergedstock
-  try { if (row.key === 'distribuidorFactor') localStorage.setItem('distfactor', String(state.distribuidorFactor)); } catch (e) {}
+  try { if (row.key === 'distribuidorFactor') Store.set('distfactor', String(state.distribuidorFactor)); } catch (e) {}
 }
 
 // received_orders
@@ -11343,7 +11507,7 @@ async function srBoot() {
 
   // La central vieja (fila-gigante) fue retirada en la Etapa 4. Por las
   // dudas dejamos su flag apagado si quedó algo viejo en este dispositivo.
-  try { localStorage.setItem('ws_enabled', '0'); } catch (e) {}
+  try { Store.set('ws_enabled', '0'); } catch (e) {}
 
   _srBooted = true;
   _srSetStatus('Sync por filas: sincronizando…', '');
@@ -11353,12 +11517,12 @@ async function srBoot() {
   // Siembra: si la nube no tiene productos y este equipo sí, sembrar una vez.
   const ns = scGetConfig().ns;
   const seededKey = SR_SEEDED + ':' + ns;
-  if (res && res.catalogEmpty && (state.merged || []).length && localStorage.getItem(seededKey) !== '1') {
+  if (res && res.catalogEmpty && (state.merged || []).length && Store.get(seededKey) !== '1') {
     _srSetStatus('Sync por filas: subiendo el stock por primera vez…', '');
     // Forzar que el flush considere todo como nuevo (huellas vacías) y subir.
     _fp().catalog = {}; _fp().multi = {}; _fp().settings = {}; _fp().orders = {};
     await srFlush();
-    try { localStorage.setItem(seededKey, '1'); } catch (e) {}
+    try { Store.set(seededKey, '1'); } catch (e) {}
   }
 
   _srWrapSaves();
@@ -11378,7 +11542,7 @@ async function srBoot() {
 
 function srToggle() {
   const turningOn = !srEnabled();
-  try { localStorage.setItem(SR_FLAG, turningOn ? '1' : '0'); } catch (e) {}
+  try { Store.set(SR_FLAG, turningOn ? '1' : '0'); } catch (e) {}
   if (turningOn) {
     _srBooted = false;
     srBoot();
@@ -11422,6 +11586,67 @@ if (document.readyState === 'loading') {
 } else {
   srInitUI(); setTimeout(srBoot, 2000);
 }
+
+
+// ════════════════════════════════════════════════════════════════════
+// BOOT.JS — Orquesta el arranque con el almacén durable (IndexedDB)
+// ════════════════════════════════════════════════════════════════════
+//
+//   store.js carga PRIMERO y deja Store.get/set listos (leyendo de
+//   localStorage como respaldo hasta que IndexedDB cargue). Los módulos,
+//   al parsear, ya leen su estado por esa vía. Pero el dato "de verdad"
+//   vive en IndexedDB, que carga de forma asíncrona. Por eso:
+//
+//   1) Esperamos Store.init() (abre IndexedDB, carga todo a memoria y, la
+//      primera vez, migra lo que había en localStorage).
+//   2) Recién entonces releemos el estado (ahora desde IndexedDB) y
+//      renderizamos. Así nunca se muestra dato viejo del respaldo.
+//
+//   Si IndexedDB fallara, Store.init() resuelve igual en modo localStorage
+//   y el arranque sigue funcionando.
+// ════════════════════════════════════════════════════════════════════
+
+(function () {
+  let _done = false;
+
+  function _reloadStateFromStore() {
+    if (_done) return;
+    _done = true;
+    // Releer todas las colecciones desde el almacén ya poblado por IndexedDB.
+    try {
+      if (typeof loadMinStock === 'function')          loadMinStock();
+      if (typeof loadDupMemory === 'function')          loadDupMemory();
+      if (typeof loadChinaPrices === 'function')        loadChinaPrices();
+      if (typeof loadChinaSources === 'function')       loadChinaSources();
+      if (typeof loadInferPending === 'function')       loadInferPending();
+      if (typeof loadRubrosMultis === 'function')       loadRubrosMultis();
+      if (typeof loadDistribuidorFactor === 'function') loadDistribuidorFactor();
+      if (typeof loadReceivedOrders === 'function')     loadReceivedOrders();
+      if (typeof loadDocConfig === 'function')          loadDocConfig();
+      if (typeof loadPrices === 'function')             loadPrices();
+    } catch (e) { console.warn('boot reload:', e && e.message); }
+
+    // Restaurar y renderizar el stock (lo que antes hacía la IIFE de ui.js).
+    try { if (typeof restoreStockOnInit === 'function') restoreStockOnInit(); }
+    catch (e) { console.warn('boot restore:', e && e.message); }
+  }
+
+  function _go() {
+    if (typeof Store === 'undefined' || typeof Store.init !== 'function') {
+      _reloadStateFromStore();
+      return;
+    }
+    // Red de seguridad: si por lo que sea init() tardara demasiado, igual
+    // arrancamos (Store.get cae a localStorage).
+    const safety = setTimeout(_reloadStateFromStore, 4000);
+    Store.init()
+      .then(() => { clearTimeout(safety); _reloadStateFromStore(); })
+      .catch(() => { clearTimeout(safety); _reloadStateFromStore(); });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _go);
+  else _go();
+})();
 
 </script>
 </body>
