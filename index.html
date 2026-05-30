@@ -8435,12 +8435,20 @@ const BK_MIN_HOURS = 12;     // no auto-snapshot más seguido que esto (entre to
 
 function _bkNum(key) { return parseInt(Store.get(key) || '0', 10) || 0; }
 
+let _bkSnapBusy = false;   // candado: un solo auto-snapshot a la vez
+let _bkEvalT = null;       // debounce de la evaluación tras una ráfaga
+
 // ── Recuento de cambios ──
+// Solo cuenta y agenda UNA evaluación tras la ráfaga (no dispara nada por
+// cada guardado). Así una operación masiva no genera una avalancha.
 function bkBumpChange() {
-  const n = _bkNum('bk_changes') + 1;
-  Store.set('bk_changes', String(n));
-  if (n >= BK_THRESHOLD) bkMaybeAutoSnapshot();
+  Store.set('bk_changes', String(_bkNum('bk_changes') + 1));
+  clearTimeout(_bkEvalT);
+  _bkEvalT = setTimeout(_bkEvaluate, 2500);
+}
+function _bkEvaluate() {
   _bkUpdateReminder();
+  bkMaybeAutoSnapshot();   // internamente limitado a 1 cada BK_MIN_HOURS
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -8475,16 +8483,24 @@ function _bkReady() {
 }
 
 async function bkMaybeAutoSnapshot() {
+  if (_bkSnapBusy) return;                 // ya hay uno en curso
   if (!_bkReady()) return;
-  const client = scClient(); const ns = scGetConfig().ns;
+  // Freno SINCRÓNICO: como máximo uno cada BK_MIN_HOURS en este equipo.
+  const lastLocal = _bkNum('bk_last_snapshot');
+  if (Date.now() - lastLocal < BK_MIN_HOURS * 3600000) return;
+  _bkSnapBusy = true;
+  // Marcar YA (antes del await) para bloquear cualquier reentrada inmediata.
+  Store.set('bk_last_snapshot', String(Date.now()));
   try {
-    // No duplicar: si ya hay una copia reciente (de cualquier equipo), saltar.
+    const client = scClient(); const ns = scGetConfig().ns;
+    // Respaldo: si OTRO equipo ya hizo una auto reciente, no duplicar.
     const { data } = await client.from('backups').select('created_at')
-      .eq('ns', ns).order('created_at', { ascending: false }).limit(1);
+      .eq('ns', ns).eq('kind', 'auto').order('created_at', { ascending: false }).limit(1);
     const lastTs = (data && data[0]) ? new Date(data[0].created_at).getTime() : 0;
-    if (Date.now() - lastTs < BK_MIN_HOURS * 3600000) { Store.set('bk_changes', '0'); return; }
+    if (Date.now() - lastTs < BK_MIN_HOURS * 3600000) return;
     await bkSnapshotCreate('auto');
   } catch (e) { console.warn('auto-snapshot:', e && e.message); }
+  finally { _bkSnapBusy = false; }
 }
 
 async function bkSnapshotCreate(kind = 'manual', label) {
@@ -8496,7 +8512,6 @@ async function bkSnapshotCreate(kind = 'manual', label) {
     const { error } = await client.from('backups').insert({ ns, kind, label: label || null, payload, size_kb: sizeKb });
     if (error) { console.warn('snapshot:', error.message); return { ok: false }; }
     Store.set('bk_last_snapshot', String(Date.now()));
-    if (kind === 'auto') Store.set('bk_changes', '0');
     await _bkPrune(ns);
     return { ok: true };
   } catch (e) { console.warn('snapshot:', e && e.message); return { ok: false }; }
