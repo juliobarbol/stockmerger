@@ -11383,7 +11383,7 @@ function _srDevice() {
   } catch (e) { return 'd0'; }
 }
 
-let _srBooted = false, _srWrapped = false, _srPushing = false;
+let _srBooted = false, _srWrapped = false, _srPushing = false, _srBulk = false;
 let _srFlushT = null, _srSweepT = null, _srRenderT = null;
 let _srChans = [];
 let _srFp = null;
@@ -11455,13 +11455,14 @@ function _applyCatRow(row) {
     if (row.china_source != null)   state.chinaSources[key] = row.china_source; else delete state.chinaSources[key];
     if (row.min_stock != null)      state.minStock[key] = row.min_stock; else delete state.minStock[key];
   }
-  // persistir local sin disparar flush (las save están envueltas, pero el fp
-  // ya quedará igual al contenido → el diff no encontrará nada que subir)
-  if (typeof saveMerged === 'function')       saveMerged();
-  if (typeof savePrices === 'function')        savePrices();
-  if (typeof saveChinaPrices === 'function')   saveChinaPrices();
-  if (typeof saveMinStock === 'function')      saveMinStock();
-  if (typeof markPricesDirty === 'function')   markPricesDirty();
+  // persistir local (en pull masivo se saltea y se guarda UNA vez al final)
+  if (!_srBulk) {
+    if (typeof saveMerged === 'function')       saveMerged();
+    if (typeof savePrices === 'function')        savePrices();
+    if (typeof saveChinaPrices === 'function')   saveChinaPrices();
+    if (typeof saveMinStock === 'function')      saveMinStock();
+    if (typeof markPricesDirty === 'function')   markPricesDirty();
+  }
 }
 
 // rubro_multipliers
@@ -11473,7 +11474,7 @@ function _multiRow(ns, rubro, c) {
 function _applyMultiRow(row) {
   if (row.deleted) delete state.rubrosMultis[row.rubro];
   else state.rubrosMultis[row.rubro] = { l7: row.l7, vip: row.vip };
-  if (typeof saveRubrosMultis === 'function') saveRubrosMultis();
+  if (!_srBulk && typeof saveRubrosMultis === 'function') saveRubrosMultis();
 }
 
 // settings (clave/valor)
@@ -11488,7 +11489,7 @@ function _applySettingRow(row) {
   if (row.key === 'distribuidorFactor' && row.value != null) state.distribuidorFactor = row.value;
   else if (row.key === 'colAx')  state.colAx  = row.value || '';
   else if (row.key === 'colAx2') state.colAx2 = row.value || '';
-  if (typeof saveMerged === 'function') saveMerged(); // colAx/colAx2 viven en mergedstock
+  if (!_srBulk && typeof saveMerged === 'function') saveMerged(); // colAx/colAx2 viven en mergedstock
   try { if (row.key === 'distribuidorFactor') Store.set('distfactor', String(state.distribuidorFactor)); } catch (e) {}
 }
 
@@ -11502,7 +11503,7 @@ function _applyOrderRow(row) {
   const i = state.receivedOrders.findIndex(o => o.localId === id);
   if (row.deleted) { if (i >= 0) state.receivedOrders.splice(i, 1); }
   else { if (i >= 0) state.receivedOrders[i] = row.payload; else state.receivedOrders.push(row.payload); }
-  if (typeof saveReceivedOrders === 'function') saveReceivedOrders();
+  if (!_srBulk && typeof saveReceivedOrders === 'function') saveReceivedOrders();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -11614,14 +11615,25 @@ async function srPullAll() {
       client.from('settings').select('*').eq('ns', ns),
       client.from('received_orders').select('*').eq('ns', ns),
     ]);
+    _srBulk = true;
     if (ci.data) ci.data.forEach(row => { if (!row.deleted) _applyCatRow(row); fp.catalog[row.item_key] = { h: _hash(_catContent(row.item_key)), ts: row.updated_at, del: !!row.deleted }; });
     if (rm.data) rm.data.forEach(row => { if (!row.deleted) _applyMultiRow(row); fp.multi[row.rubro] = { h: _hash(_multiContent(row.rubro)), ts: row.updated_at, del: !!row.deleted }; });
     if (st.data) st.data.forEach(row => { _applySettingRow(row); fp.settings[row.key] = { h: _hash(_settingValue(row.key)), ts: row.updated_at }; });
     if (ro.data) ro.data.forEach(row => { if (!row.deleted) _applyOrderRow(row); fp.orders[row.local_id] = { h: _hash(row.payload), ts: row.updated_at, del: !!row.deleted }; });
+    _srBulk = false;
+    // Guardar UNA sola vez tras el pull masivo (no por cada fila → evita O(n²)).
+    if (typeof saveMerged === 'function')        saveMerged();
+    if (typeof savePrices === 'function')         savePrices();
+    if (typeof saveChinaPrices === 'function')    saveChinaPrices();
+    if (typeof saveMinStock === 'function')       saveMinStock();
+    if (typeof saveRubrosMultis === 'function')   saveRubrosMultis();
+    if (typeof saveReceivedOrders === 'function') saveReceivedOrders();
+    if (typeof markPricesDirty === 'function')    markPricesDirty();
     _saveFp();
     _srScheduleRender();
     return { catalogEmpty: !ci.data || ci.data.length === 0 };
   } catch (e) {
+    _srBulk = false;
     console.warn('srPullAll:', e.message);
     return false;
   }
@@ -11696,6 +11708,15 @@ function srStopRealtime() {
 function _srScheduleRender() {
   clearTimeout(_srRenderT);
   _srRenderT = setTimeout(() => {
+    // Equipo nuevo que recién bajó el catálogo de la nube: la pestaña Stock
+    // está deshabilitada y se ve la pantalla de "vacío". Revelarla.
+    try {
+      const tab = document.getElementById('tab-stock');
+      if ((state.merged || []).length && tab && tab.disabled && typeof restoreStockOnInit === 'function') {
+        restoreStockOnInit();   // habilita la pestaña, oculta el "vacío" y renderiza
+        return;
+      }
+    } catch (e) {}
     if (typeof renderStats === 'function') renderStats();
     if (typeof applyFilter === 'function') applyFilter();
     if (typeof renderOrdersTab === 'function') renderOrdersTab();
