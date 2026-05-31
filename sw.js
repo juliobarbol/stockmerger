@@ -10,7 +10,7 @@
 // versión nueva invalida la anterior y los usuarios reciben la última.
 // ════════════════════════════════════════════════════════════════════
 
-const CACHE = 'stockmerger-20260531-192059';
+const CACHE = 'stockmerger-20260531-193400';
 
 // Recursos propios (mismo origen) — se precachean al instalar.
 const PRECACHE = [

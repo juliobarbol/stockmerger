@@ -215,6 +215,7 @@ tr.row-lowstock td{background:#f59e0b08}
 
 /* BACKUP SECTION */
 .backup-section{padding:.75rem 1rem 1.5rem;border-top:1px solid var(--border);margin-top:.25rem}
+.backup-sub{font-family:'DM Mono',monospace;font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text);opacity:.8;font-weight:600;margin:.2rem 0 .5rem;display:flex;align-items:center;gap:.4rem}
 .backup-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.5rem}
 .btn-backup{display:flex;align-items:center;gap:.6rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.7rem .8rem;cursor:pointer;transition:border-color .15s;-webkit-tap-highlight-color:transparent;font-family:inherit;font-size:1rem;text-align:left;width:100%}
 .btn-backup:active{border-color:var(--accent)}
@@ -2338,9 +2339,24 @@ tr.row-lowstock td{background:#f59e0b08}
       <a id="resetInitialLink" onclick="offerResetInitialStock()" style="display:none;text-align:center;font-size:.62rem;color:var(--muted);font-family:'DM Mono',monospace;margin-top:.7rem;cursor:pointer;text-decoration:underline;opacity:.55">Resetear stock (volver a habilitar carga inicial)</a>
     </div>
 
-    <!-- Backup / Restore -->
+    <!-- 💾 Copias de seguridad (unificado: teléfono + nube) -->
     <div class="backup-section">
-      <div class="section-title">💾 Copia de seguridad</div>
+      <div class="section-title">💾 Copias de seguridad</div>
+
+      <!-- 🔔 Recordatorio (Capa 1) -->
+      <div id="bkReminder" style="display:none;flex-direction:column;gap:.5rem;background:#3a2e12;border:1px solid #7a5c1a;border-radius:.6rem;padding:.6rem .7rem;margin:.2rem 0 .9rem">
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <span style="font-size:1.05rem">🔔</span>
+          <span style="flex:1;font-size:.8rem;line-height:1.35">Conviene descargar un backup y guardarlo aparte.</span>
+        </div>
+        <button class="btn-backup btn-backup-primary" style="width:100%;padding:.5rem;white-space:nowrap" onclick="bkDownloadNow()">⬇ Descargar backup</button>
+      </div>
+
+      <!-- En este teléfono -->
+      <div class="backup-sub">📱 En este teléfono</div>
+      <p style="font-size:.66rem;color:var(--muted);margin:0 0 .5rem;line-height:1.35">
+        Descargás un archivo y lo guardás vos (mail, Drive, etc.). Es la copia más segura ante cualquier problema.
+      </p>
       <div class="backup-row">
         <button class="btn-backup" onclick="exportBackup(true)">
           <span>⬇</span>
@@ -2367,23 +2383,11 @@ tr.row-lowstock td{background:#f59e0b08}
           <input type="file" accept=".json" onchange="importBackup(event)" style="display:none">
         </label>
       </div>
-    </div>
 
-    <!-- 🔔 Recordatorio de backup (Capa 1) -->
-    <div id="bkReminder" style="display:none;flex-direction:column;gap:.5rem;background:#3a2e12;border:1px solid #7a5c1a;border-radius:.6rem;padding:.6rem .7rem;margin-bottom:.6rem">
-      <div style="display:flex;align-items:center;gap:.5rem">
-        <span style="font-size:1.05rem">🔔</span>
-        <span style="flex:1;font-size:.8rem;line-height:1.35">Conviene descargar un backup y guardarlo aparte.</span>
-      </div>
-      <button class="btn-backup btn-backup-primary" style="width:100%;padding:.5rem;white-space:nowrap" onclick="bkDownloadNow()">⬇ Descargar backup</button>
-    </div>
-
-    <!-- ☁ Copias en la nube (Capa 2) -->
-    <div class="backup-section">
-      <div class="section-title">☁ Copias en la nube</div>
-      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">
-        Fotos del estado guardadas en Supabase, fechadas. Si alguien borra o arruina algo,
-        se puede volver a una copia anterior. Se crean solas cada tanto; también podés crear una ahora.
+      <!-- En la nube -->
+      <div class="backup-sub" style="margin-top:1.1rem">☁ En la nube</div>
+      <p style="font-size:.66rem;color:var(--muted);margin:0 0 .5rem;line-height:1.35">
+        Fotos del estado guardadas en Supabase, fechadas. Si alguien borra o arruina algo, volvés a una copia anterior. Se crean solas cada tanto.
       </p>
       <button class="btn-backup btn-backup-primary" onclick="bkSnapshotCreateUI()" style="width:100%;padding:.6rem;margin-bottom:.5rem">
         <span>📸</span>
@@ -2791,15 +2795,8 @@ tr.row-lowstock td{background:#f59e0b08}
       ☁⬇ De la nube
     </button>
     <button class="btn-orders" onclick="openConfigModal()" title="Datos del emisor y numeración">
-      ⚙️
+      ⚙️ Facturación
     </button>
-  </div>
-
-  <!-- Stats -->
-  <div class="orders-stats">
-    <div class="stat-pill">📊 <b id="ordersStatTotal">0</b> totales</div>
-    <div class="stat-pill sp-pen">⏳ <b id="ordersStatPendientes">0</b> pendientes</div>
-    <div class="stat-pill sp-conf">✓ <b id="ordersStatConfirm">0</b> confirmados</div>
   </div>
 
   <!-- Búsqueda -->
@@ -2813,11 +2810,11 @@ tr.row-lowstock td{background:#f59e0b08}
     </div>
   </div>
 
-  <!-- Chips de filtro -->
+  <!-- Chips de filtro (con el conteo integrado) -->
   <div class="orders-chips">
-    <div class="chip active" onclick="setOrdersFilter('all',this)">Todos</div>
-    <div class="chip warn-chip" onclick="setOrdersFilter('pendiente',this)">⏳ Pendientes</div>
-    <div class="chip" onclick="setOrdersFilter('confirmado',this)">✓ Confirmados</div>
+    <div class="chip active" onclick="setOrdersFilter('all',this)">Todos <b id="ordersStatTotal" style="margin-left:.3rem">0</b></div>
+    <div class="chip warn-chip" onclick="setOrdersFilter('pendiente',this)">⏳ Pendientes <b id="ordersStatPendientes" style="margin-left:.3rem">0</b></div>
+    <div class="chip" onclick="setOrdersFilter('confirmado',this)">✓ Confirmados <b id="ordersStatConfirm" style="margin-left:.3rem">0</b></div>
     <div class="chip" onclick="setOrdersFilter('descartado',this)">Descartados</div>
   </div>
 
