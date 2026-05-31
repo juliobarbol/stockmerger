@@ -90,6 +90,7 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .btn-merge{display:flex;align-items:center;justify-content:center;gap:.5rem;width:100%;padding:1rem;background:var(--accent);color:#0d0f14;font-family:'Syne',sans-serif;font-weight:800;font-size:1rem;border:none;border-radius:14px;cursor:pointer;transition:opacity .15s,transform .1s;min-height:var(--tap);-webkit-tap-highlight-color:transparent;letter-spacing:-.01em}
 .btn-merge:active{transform:scale(.97);opacity:.82}
 .btn-merge:disabled{opacity:.28;cursor:not-allowed}
+.btn-merge-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
 
 /* DUPLICATE REVIEW */
 .dup-list{padding:.75rem 1rem calc(var(--tap)+3rem);display:flex;flex-direction:column;gap:.75rem}
@@ -797,15 +798,12 @@ tr.row-lowstock td{background:#f59e0b08}
   align-self: flex-start;
   position: relative;
   cursor: pointer;
-  background: var(--accent);
-  color: #0d0f14;
-  border-color: var(--accent);
+  border: 1px solid var(--border);
   font-family: 'Syne', sans-serif;
   font-weight: 700;
   font-size: .75rem;
   padding: .55rem .8rem;
   border-radius: 8px;
-  border: 1px solid;
   min-height: var(--tap);
   display: inline-flex;
   align-items: center;
@@ -2330,8 +2328,8 @@ tr.row-lowstock td{background:#f59e0b08}
     </div>
 
     <div class="merge-section">
-      <button class="btn-merge" id="btnLoadInicial" onclick="confirmAndMerge('inicial')" disabled>⚡ CARGAR STOCK INICIAL</button>
-      <button class="btn-merge btn-merge-secondary" id="btnLoadIngreso" onclick="confirmAndMerge('ingreso')" disabled style="margin-top:.5rem">➕ NUEVO INGRESO (sumar al stock)</button>
+      <button class="btn-merge btn-merge-secondary" id="btnLoadInicial" onclick="confirmAndMerge('inicial')" disabled>⚡ CARGAR STOCK INICIAL</button>
+      <button class="btn-merge" id="btnLoadIngreso" onclick="confirmAndMerge('ingreso')" disabled style="margin-top:.5rem">➕ NUEVO INGRESO (sumar al stock)</button>
       <p style="font-size:.65rem;color:var(--muted);margin-top:.4rem;text-align:center;line-height:1.4">
         <b>Carga inicial</b>: reemplaza el stock actual.<br>
         <b>Nuevo ingreso</b>: suma al stock existente.
