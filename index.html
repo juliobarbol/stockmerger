@@ -3941,10 +3941,11 @@ async function computeIngestHash(productMap) {
 //
 //   levenshtein(a, b)     → distancia de edición entre dos strings.
 //                           Implementación O(n) en memoria con dos filas.
-//                           Usada por similarity() y por detección de duplicados.
+//                           Usada por simLevenshtein().
 //
-//   similarity(a, b)      → similitud entre 0 y 1 basada en Levenshtein.
-//                           Umbral típico de match: 0.82 (duplicados) / 0.92 (precios).
+//   simLevenshtein(a, b)  → similitud 0..1 basada en Levenshtein. DISPONIBLE
+//                           pero sin usar (ver nota M2). La métrica activa es
+//                           simBigrams (Dice) en prices.js.
 //
 //   detectHeaderRow(ws)   → detecta automáticamente la fila de encabezado en
 //                           un Excel (puede estar en filas 1-15). Considera
@@ -3991,7 +3992,11 @@ function levenshtein(a, b) {
   return prev[n];
 }
 
-function similarity(a, b) {
+// Similitud 0..1 basada en distancia de Levenshtein (normaliza ambos lados).
+// DISPONIBLE pero hoy SIN USAR: la app usa simBigrams (Dice, en prices.js)
+// para todo el fuzzy match. Se conserva por si se quiere cambiar la métrica
+// de detección de duplicados a Levenshtein (requiere re-calibrar el 0.82).
+function simLevenshtein(a, b) {
   const na = normalize(a), nb = normalize(b);
   const maxLen = Math.max(na.length, nb.length);
   if (!maxLen) return 1;
@@ -4003,7 +4008,9 @@ function fuzzyMatch(product, query) {
   if (np.includes(nq)) return true;
   const tokens = nq.split(' ').filter(Boolean);
   if (tokens.every(t => np.includes(t))) return true;
-  if (nq.length >= 4 && similarity(np, nq) >= 0.72) return true;
+  // simBigrams vive en prices.js (mismo bundle global). Se usa Dice para
+  // mantener el comportamiento de búsqueda que ya estaba en producción.
+  if (nq.length >= 4 && simBigrams(np, nq) >= 0.72) return true;
   return false;
 }
 
@@ -4573,7 +4580,7 @@ function _detectDupsWithinMap(map, pending, autoResolved) {
         if (checkedPairs.has(pairKey)) continue;
         checkedPairs.add(pairKey);
 
-        const sim = similarity(keys[i], keys[j]);
+        const sim = simBigrams(keys[i], keys[j]);
         if (sim < 0.82 || sim >= 1) continue;
 
         const kA = keys[i], kB = keys[j];
@@ -4636,7 +4643,7 @@ function _detectDupsAgainstStock(ingestMap, pending, autoResolved) {
 
     let bestMatch = null, bestSim = 0;
     candidates.forEach(sk => {
-      const sim = similarity(nk, sk);
+      const sim = simBigrams(nk, sk);
       if (sim >= 0.82 && sim < 1 && sim > bestSim) {
         bestSim = sim;
         bestMatch = sk;
@@ -5239,7 +5246,7 @@ function manualCreateProduct(data) {
   // Usamos la misma similitud que el detector de duplicados (≥0.82).
   let fuzzyMatch = null;
   for (const p of state.merged) {
-    const sim = similarity(newKey, p._key);
+    const sim = simBigrams(newKey, p._key);
     if (sim >= 0.82 && sim < 1) {
       if (!fuzzyMatch || sim > fuzzyMatch.sim) {
         fuzzyMatch = { product: p, sim };
@@ -6280,8 +6287,17 @@ function markPricesDirty() {
   _chinaMap = null;
 }
 
-// Helpers de similitud para fuzzy match (igual que en v22)
-function similarity(a, b) {
+// Similitud por coeficiente de Dice sobre bigramas (rango 0..1).
+// ES LA QUE SE USA EN TODA LA APP para fuzzy match: detección de duplicados
+// (merge.js, umbral 0.82), búsqueda (fuzzyMatch en utils.js, 0.72) e
+// inferencia de precio China (getChinaPrice, 0.92).
+// NOTA (M2): antes esta función y otra basada en Levenshtein (utils.js)
+// se llamaban ambas `similarity`; como prices.js carga último, esta pisaba
+// a la otra. Se renombraron a `simBigrams` (esta) y `simLevenshtein` (la de
+// utils.js, hoy disponible pero sin usar) para que no dependa del orden de
+// carga. NO recibe strings normalizados internamente: los llamadores ya le
+// pasan keys normalizadas.
+function simBigrams(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
   const longer  = a.length >= b.length ? a : b;
@@ -6318,7 +6334,7 @@ function getChinaPrice(key) {
     if (keyTokens.length > 0 || kTokens.length > 0) {
       if (keyTokens.join(' ') !== kTokens.join(' ')) continue;
     }
-    const s = similarity(k, key);
+    const s = simBigrams(k, key);
     if (s > bestSim && s >= 0.92) {
       bestSim = s; bestPrice = price;
       if (s >= 0.99) break;
@@ -6710,7 +6726,7 @@ function _processInferredImport(rows, cols, lista, filename) {
       if (queryTokens.length > 0 || skTokens.length > 0) {
         if (queryTokens.join(' ') !== skTokens.join(' ')) continue;
       }
-      const sim = similarity(sk, k);
+      const sim = simBigrams(sk, k);
       if (sim > bestSim && sim >= 0.92) {
         bestSim = sim; bestItem = item;
         if (sim >= 0.99) break;
