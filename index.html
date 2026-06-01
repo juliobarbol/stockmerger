@@ -3460,7 +3460,12 @@ const state = {
 // Flags globales para el módulo de precios — declarados aquí para evitar
 // "Cannot access before initialization" cuando files.js llama markPricesDirty
 let _pricesNeedRender = true;
-let _chinaMap = null; // Map<normalizedKey, precioChina> — índice O(1)
+let _chinaMap = null;        // Map<normalizedKey, precioChina> — índice O(1)
+let _chinaBuckets = null;    // Map<firmaTokens, Array<[key, price]>> — acota el fuzzy (M3)
+let _chinaPriceCache = null; // Map<key, precio|null> — memo de getChinaPrice (M3)
+let _stockIdx = null;        // Map<_key, item> — evita .find lineal en calcularPrecios (M3)
+let _stockIdxRef = null;     // referencia al array state.merged con el que se armó el índice
+let _stockIdxLen = -1;       // longitud con la que se armó (para detectar altas/bajas)
 
 // ── Helper centralizado para guardar en localStorage con manejo de cuota ──
 // Devuelve true si guardó OK, false si falló. Avisa al usuario con toast
@@ -6280,11 +6285,24 @@ function savePrices() {
 // ── Índice rápido de chinaPrices ──
 function buildChinaMap() {
   _chinaMap = new Map(Object.entries(state.chinaPrices));
+  // Índice por firma de tokens numéricos: el fuzzy de getChinaPrice solo
+  // compara contra el bucket con la MISMA firma (mismo criterio que el
+  // prefiltro anterior, pero sin recorrer todo el mapa). (M3)
+  _chinaBuckets = new Map();
+  for (const [k, price] of _chinaMap) {
+    const sig = extractDigitTokens(k).join(' ');
+    let arr = _chinaBuckets.get(sig);
+    if (!arr) { arr = []; _chinaBuckets.set(sig, arr); }
+    arr.push([k, price]);
+  }
+  _chinaPriceCache = new Map(); // memo de resultados fuzzy
 }
 
 function markPricesDirty() {
   _pricesNeedRender = true;
   _chinaMap = null;
+  _chinaBuckets = null;
+  _chinaPriceCache = null;
 }
 
 // Similitud por coeficiente de Dice sobre bigramas (rango 0..1).
@@ -6323,23 +6341,25 @@ function extractDigitTokens(s) {
   return m ? m.map(t => t.toLowerCase()) : [];
 }
 
-// Busca precio China — exacto o fuzzy con tokens numéricos coincidentes
+// Busca precio China — exacto o fuzzy con tokens numéricos coincidentes.
+// (M3) Exacto O(1); el fuzzy solo recorre el bucket con la misma firma de
+// tokens y se memoiza por key (mismo ciclo de vida que _chinaMap).
 function getChinaPrice(key) {
   if (!_chinaMap) buildChinaMap();
   if (_chinaMap.has(key)) return _chinaMap.get(key);
-  const keyTokens = extractDigitTokens(key);
+  if (_chinaPriceCache.has(key)) return _chinaPriceCache.get(key);
+
+  const sig = extractDigitTokens(key).join(' ');
+  const candidates = _chinaBuckets.get(sig) || [];
   let bestSim = 0, bestPrice = null;
-  for (const [k, price] of _chinaMap) {
-    const kTokens = extractDigitTokens(k);
-    if (keyTokens.length > 0 || kTokens.length > 0) {
-      if (keyTokens.join(' ') !== kTokens.join(' ')) continue;
-    }
+  for (const [k, price] of candidates) {
     const s = simBigrams(k, key);
     if (s > bestSim && s >= 0.92) {
       bestSim = s; bestPrice = price;
       if (s >= 0.99) break;
     }
   }
+  _chinaPriceCache.set(key, bestPrice); // memoiza también los null
   return bestPrice;
 }
 
@@ -6380,6 +6400,22 @@ function _hasRealOverride(entry) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// (M3) Índice _key→item del stock para evitar el .find lineal por producto
+// en calcularPrecios cuando se recorre todo el stock (publicar, exportar,
+// stats, render). Se reconstruye solo si cambió el array (identidad) o su
+// longitud — altas/bajas de productos. Las mutaciones in-place de campos
+// (qty, rubro) se reflejan solas porque guardamos la REFERENCIA al item y
+// los campos se leen en vivo desde ella.
+function _getStockIdx() {
+  const m = state.merged;
+  if (!Array.isArray(m)) { _stockIdx = null; _stockIdxRef = null; _stockIdxLen = -1; return null; }
+  if (_stockIdx && _stockIdxRef === m && _stockIdxLen === m.length) return _stockIdx;
+  const idx = new Map();
+  for (const s of m) { if (s._key) idx.set(s._key, s); }
+  _stockIdx = idx; _stockIdxRef = m; _stockIdxLen = m.length;
+  return idx;
+}
+
 // FUNCIÓN CENTRAL: calcularPrecios(key)
 // ════════════════════════════════════════════════════════════════════
 function calcularPrecios(key) {
@@ -6397,8 +6433,9 @@ function calcularPrecios(key) {
   // Resolver rubro: primero del override, si no del stock fusionado
   const entry = state.prices[key];
   let rubro = entry?.rubro;
-  if (!rubro && Array.isArray(state.merged)) {
-    const stockItem = state.merged.find(s => s._key === key);
+  if (!rubro) {
+    const idx = _getStockIdx();
+    const stockItem = idx ? idx.get(key) : null;
     rubro = stockItem?.extraA2 || stockItem?.rubro || '';
   }
   const rubroN = normalizeRubro(rubro);
