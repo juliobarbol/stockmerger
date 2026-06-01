@@ -8797,12 +8797,36 @@ async function scTestConnection() {
 // PUBLICAR CATÁLOGO — sube stock + 3 listas a la nube (upsert).
 // Reusa buildVendorPayload() de backup.js para no divergir del .json.
 // ════════════════════════════════════════════════════════════════════
+// Estado de auto-publicación (M4):
+//   _catalogPublishPending → un intento automático no pudo subir (sin
+//     conexión / error de red) y quedó pendiente. Se reintenta al volver
+//     online o al traer la app al frente. Así el catálogo del vendedor no
+//     queda viejo después de confirmar pedidos o ajustar stock sin internet.
+//   _publishingNow → evita publicaciones concurrentes (el upsert es
+//     idempotente, pero no tiene sentido pisarse). Si llega un cambio
+//     mientras se está subiendo, queda marcado como pendiente.
+let _catalogPublishPending = false;
+let _publishingNow = false;
+
+// Marca el catálogo como pendiente de publicar y deja un status discreto.
+// Se usa solo en modo automático (silencioso, sin toast).
+function _markCatalogPublishPending() {
+  _catalogPublishPending = true;
+  if (typeof scStatus === 'function') {
+    scStatus('Sin conexión — catálogo pendiente de publicar. Se reintenta al volver internet.', '');
+  }
+}
+
 async function publishCatalog(opts = {}) {
   // Modo auto: disparado en segundo plano por un cambio de stock. Silencioso
-  // (sin toasts ni status ruidoso); si algo falla, solo queda en consola.
+  // (sin toasts ni status ruidoso); si algo falla, queda pendiente y se
+  // reintenta solo al recuperar la conexión.
   const auto = !!opts.auto;
   if (!scLibReady()) {
-    if (!auto) {
+    if (auto) {
+      // Configurada pero sin librería (app abierta sin internet): pendiente.
+      if (scIsConfigured()) _markCatalogPublishPending();
+    } else {
       toast('La nube no está disponible (la librería no cargó — ¿sin internet?). ' +
             'Podés usar "Exportar para vendedores" como archivo.', 'err');
       scStatus('Librería de Supabase no disponible.', 'err');
@@ -8810,6 +8834,7 @@ async function publishCatalog(opts = {}) {
     return;
   }
   if (!scIsConfigured()) {
+    // Nube no usada — no marcamos pendiente.
     if (!auto) {
       toast('Configurá primero la URL y la anon key de Supabase.', 'err');
       scStatus('Falta configurar la nube.', 'err');
@@ -8822,9 +8847,19 @@ async function publishCatalog(opts = {}) {
 
   const client = scClient();
   if (!client) {
-    if (!auto) toast('No se pudo crear el cliente de la nube.', 'err');
+    if (auto) _markCatalogPublishPending();
+    else toast('No se pudo crear el cliente de la nube.', 'err');
     return;
   }
+
+  // Evitar publicaciones concurrentes. Si ya hay una en curso, dejamos
+  // marcado pendiente (en auto) para que el reintento publique el estado
+  // más nuevo cuando termine la actual.
+  if (_publishingNow) {
+    if (auto) _catalogPublishPending = true;
+    return;
+  }
+  _publishingNow = true;
 
   const c = scGetConfig();
   if (!auto) scStatus('Publicando a la nube…', '');
@@ -8839,13 +8874,18 @@ async function publishCatalog(opts = {}) {
 
     if (error) {
       console.error('publishCatalog error:', error);
-      if (!auto) {
+      if (auto) {
+        _markCatalogPublishPending();
+      } else {
         toast('Error al publicar: ' + (error.message || 'desconocido') +
               '. Probá "Exportar para vendedores" como archivo.', 'err');
         scStatus('Error al publicar: ' + (error.message || 'desconocido'), 'err');
       }
       return;
     }
+
+    // Éxito: ya no hay nada pendiente.
+    _catalogPublishPending = false;
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     if (auto) {
@@ -8858,12 +8898,24 @@ async function publishCatalog(opts = {}) {
     }
   } catch (e) {
     console.error('publishCatalog exception:', e);
-    if (!auto) {
+    if (auto) {
+      _markCatalogPublishPending();
+    } else {
       toast('Error de red al publicar: ' + (e.message || 'sin conexión') +
             '. Usá el archivo .json como respaldo.', 'err');
       scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
     }
+  } finally {
+    _publishingNow = false;
   }
+}
+
+// Reintenta la publicación si quedó pendiente (al volver online o al frente).
+function retryCatalogPublishIfPending() {
+  if (!_catalogPublishPending) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
+  if (typeof scLibReady === 'function' && !scLibReady()) return; // todavía sin librería
+  publishCatalog({ auto: true });
 }
 
 // ── Auto-publicación con debounce ──
@@ -8874,7 +8926,12 @@ async function publishCatalog(opts = {}) {
 let _autoPublishTimer = null;
 function scheduleAutoPublish() {
   if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
-  if (typeof scLibReady === 'function' && !scLibReady()) return;
+  if (typeof scLibReady === 'function' && !scLibReady()) {
+    // App abierta sin internet (la librería no cargó): no se puede publicar
+    // ahora. Dejamos marcado para reintentar al volver la conexión.
+    _catalogPublishPending = true;
+    return;
+  }
   clearTimeout(_autoPublishTimer);
   _autoPublishTimer = setTimeout(() => {
     if (typeof publishCatalog === 'function') publishCatalog({ auto: true });
@@ -9022,6 +9079,15 @@ if (document.readyState === 'loading') {
 } else {
   scInitUI();
 }
+
+// M4 — Reintentar la auto-publicación pendiente cuando vuelve la conexión o
+// cuando la app vuelve al frente (mismo patrón que sync_rows / cola de
+// pedidos del vendedor). Si publishCatalog tiene éxito, limpia el flag y
+// estos disparos pasan a ser no-ops.
+window.addEventListener('online', retryCatalogPublishIfPending);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') retryCatalogPublishIfPending();
+});
 
 
 // ════════════════════════════════════════════════════════════════════
