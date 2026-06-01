@@ -4719,8 +4719,8 @@ function renderDupList() {
     return `<div class="dup-card" id="dupcard-${i}">
       <div class="dup-title">Par sospechoso #${i + 1}</div>
       <div class="dup-names">
-        <div class="dup-name"><span>${labelLeft} (${qtyA} uds.)</span>${labelA}</div>
-        <div class="dup-name"><span>${labelRight} (${qtyB} uds.)</span>${labelB}</div>
+        <div class="dup-name"><span>${labelLeft} (${qtyA} uds.)</span>${escapeHtml(labelA)}</div>
+        <div class="dup-name"><span>${labelRight} (${qtyB} uds.)</span>${escapeHtml(labelB)}</div>
       </div>
       <div class="dup-sim">Similitud: ${pct}%</div>
       <div class="dup-actions">
@@ -5477,13 +5477,13 @@ function buildCardHTML(r) {
   else if (st === 'lowstock') badges += `<span class="tag tag-lowstock">⚠️ BAJO</span>`;
   else badges += `<span class="tag tag-both">✓ OK</span>`;
   let extras = '';
-  if (state.colAx  && r.extraA  !== '') extras += `<div class="card-extra">📦 ${state.colAx}: ${r.extraA}</div>`;
-  if (state.colAx2 && r.extraA2 !== '') extras += `<div class="card-extra">📦 ${state.colAx2}: ${r.extraA2}</div>`;
+  if (state.colAx  && r.extraA  !== '') extras += `<div class="card-extra">📦 ${escapeHtml(state.colAx)}: ${escapeHtml(r.extraA)}</div>`;
+  if (state.colAx2 && r.extraA2 !== '') extras += `<div class="card-extra">📦 ${escapeHtml(state.colAx2)}: ${escapeHtml(r.extraA2)}</div>`;
   const minVal = state.minStock[r._key] ?? '';
   const safeKey = r._key.replace(/'/g, "\\'");
   return `<div class="${cardCls}">
     <div class="card-top">
-      <div class="card-product">${r.product}</div>
+      <div class="card-product">${escapeHtml(r.product)}</div>
       <div class="card-badges">${badges}</div>
     </div>
     <div class="card-nums card-nums-single">
@@ -5593,9 +5593,9 @@ function renderTableRows(data) {
   const cols = buildCols();
   let th = '<tr>';
   cols.forEach(c => {
-    if (c.key === 'minStock') { th += `<th>${c.label}</th>`; return; }
+    if (c.key === 'minStock') { th += `<th>${escapeHtml(c.label)}</th>`; return; }
     const sc = state.sortCol === c.key;
-    th += `<th onclick="sortBy('${c.key}')" class="${sc ? (state.sortDir === 1 ? 'sort-asc' : 'sort-desc') : ''}">${c.label}</th>`;
+    th += `<th onclick="sortBy('${c.key}')" class="${sc ? (state.sortDir === 1 ? 'sort-asc' : 'sort-desc') : ''}">${escapeHtml(c.label)}</th>`;
   });
   th += '</tr>';
   document.getElementById('theadRow').innerHTML = th;
@@ -5609,7 +5609,7 @@ function renderTableRows(data) {
     let rowCls = st === 'nostock' ? 'row-nostock' : st === 'lowstock' ? 'row-lowstock' : '';
     let row = `<tr class="${rowCls}">`;
     cols.forEach(c => {
-      if (c.key === 'product') row += `<td>${r.product}</td>`;
+      if (c.key === 'product') row += `<td>${escapeHtml(r.product)}</td>`;
       else if (c.key === 'qty') row += `<td class="${r.qty ? 'qty-total' : 'qty-zero'}">${r.qty ? fmt(r.qty) : '—'}</td>`;
       else if (c.key === 'status') {
         if (st === 'nostock') row += `<td><span class="tag tag-nostock">❌ Sin stock</span></td>`;
@@ -5620,8 +5620,8 @@ function renderTableRows(data) {
         const mv = state.minStock[r._key] ?? '';
         row += `<td><input type="number" class="tbl-min-input" value="${mv}" min="0" placeholder="${MIN_STOCK_GLOBAL}" onchange="saveMin('${r._key}',this.value)"></td>`;
       }
-      else if (c.key === 'extraA')  row += `<td style="color:var(--muted)">${r.extraA}</td>`;
-      else if (c.key === 'extraA2') row += `<td style="color:var(--muted)">${r.extraA2}</td>`;
+      else if (c.key === 'extraA')  row += `<td style="color:var(--muted)">${escapeHtml(r.extraA)}</td>`;
+      else if (c.key === 'extraA2') row += `<td style="color:var(--muted)">${escapeHtml(r.extraA2)}</td>`;
     });
     row += '</tr>'; return row;
   }).join('');
@@ -5667,8 +5667,8 @@ function renderDecisions() {
     return `<div class="dec-card ${isMerge ? 'dec-merge' : 'dec-keep'}">
       <div class="dec-label ${isMerge ? 'lbl-merge' : 'lbl-keep'}">${isMerge ? '✅ Fusionados' : '✗ Separados'}</div>
       <div class="dec-names">
-        <div class="dec-name">📦 ${v.labelA}</div>
-        <div class="dec-name">📦 ${v.labelB}</div>
+        <div class="dec-name">📦 ${escapeHtml(v.labelA)}</div>
+        <div class="dec-name">📦 ${escapeHtml(v.labelB)}</div>
       </div>
       <div class="dec-actions">
         <button class="btn-dec btn-dec-change" onclick="changeDecision('${safeKey}','${isMerge ? 'keep' : 'merge'}')">
