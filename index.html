@@ -7869,6 +7869,9 @@ function onStockUpdated() {
     renderProductosTable();
     renderPricesStats();
   }
+  // Publicar solo el catálogo a la nube (debounced) para que los vendedores
+  // vean el stock al instante, sin apretar "Publicar". No-op si no hay nube.
+  if (typeof scheduleAutoPublish === 'function') scheduleAutoPublish();
 }
 
 // Helper de escape para atributos HTML (igual al de utils.js si existe)
@@ -8791,16 +8794,23 @@ async function scTestConnection() {
 // PUBLICAR CATÁLOGO — sube stock + 3 listas a la nube (upsert).
 // Reusa buildVendorPayload() de backup.js para no divergir del .json.
 // ════════════════════════════════════════════════════════════════════
-async function publishCatalog() {
+async function publishCatalog(opts = {}) {
+  // Modo auto: disparado en segundo plano por un cambio de stock. Silencioso
+  // (sin toasts ni status ruidoso); si algo falla, solo queda en consola.
+  const auto = !!opts.auto;
   if (!scLibReady()) {
-    toast('La nube no está disponible (la librería no cargó — ¿sin internet?). ' +
-          'Podés usar "Exportar para vendedores" como archivo.', 'err');
-    scStatus('Librería de Supabase no disponible.', 'err');
+    if (!auto) {
+      toast('La nube no está disponible (la librería no cargó — ¿sin internet?). ' +
+            'Podés usar "Exportar para vendedores" como archivo.', 'err');
+      scStatus('Librería de Supabase no disponible.', 'err');
+    }
     return;
   }
   if (!scIsConfigured()) {
-    toast('Configurá primero la URL y la anon key de Supabase.', 'err');
-    scStatus('Falta configurar la nube.', 'err');
+    if (!auto) {
+      toast('Configurá primero la URL y la anon key de Supabase.', 'err');
+      scStatus('Falta configurar la nube.', 'err');
+    }
     return;
   }
 
@@ -8809,12 +8819,12 @@ async function publishCatalog() {
 
   const client = scClient();
   if (!client) {
-    toast('No se pudo crear el cliente de la nube.', 'err');
+    if (!auto) toast('No se pudo crear el cliente de la nube.', 'err');
     return;
   }
 
   const c = scGetConfig();
-  scStatus('Publicando a la nube…', '');
+  if (!auto) scStatus('Publicando a la nube…', '');
   try {
     const { error } = await client
       .from('catalog')
@@ -8826,22 +8836,46 @@ async function publishCatalog() {
 
     if (error) {
       console.error('publishCatalog error:', error);
-      toast('Error al publicar: ' + (error.message || 'desconocido') +
-            '. Probá "Exportar para vendedores" como archivo.', 'err');
-      scStatus('Error al publicar: ' + (error.message || 'desconocido'), 'err');
+      if (!auto) {
+        toast('Error al publicar: ' + (error.message || 'desconocido') +
+              '. Probá "Exportar para vendedores" como archivo.', 'err');
+        scStatus('Error al publicar: ' + (error.message || 'desconocido'), 'err');
+      }
       return;
     }
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    toast(`Catálogo publicado a la nube — ${built.count} productos ✓\n` +
-          `Lista 7: ${built.totalA} · Dist: ${built.totalD} · VIP: ${built.totalV}`, 'ok');
-    scStatus(`Publicado ${hora} ✓ — ${built.count} productos (tienda "${c.ns}").`, 'ok');
+    if (auto) {
+      // Status discreto: deja constancia de la última auto-publicación sin molestar.
+      scStatus(`Auto-publicado ${hora} ✓ — ${built.count} productos.`, 'ok');
+    } else {
+      toast(`Catálogo publicado a la nube — ${built.count} productos ✓\n` +
+            `Lista 7: ${built.totalA} · Dist: ${built.totalD} · VIP: ${built.totalV}`, 'ok');
+      scStatus(`Publicado ${hora} ✓ — ${built.count} productos (tienda "${c.ns}").`, 'ok');
+    }
   } catch (e) {
     console.error('publishCatalog exception:', e);
-    toast('Error de red al publicar: ' + (e.message || 'sin conexión') +
-          '. Usá el archivo .json como respaldo.', 'err');
-    scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
+    if (!auto) {
+      toast('Error de red al publicar: ' + (e.message || 'sin conexión') +
+            '. Usá el archivo .json como respaldo.', 'err');
+      scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
+    }
   }
+}
+
+// ── Auto-publicación con debounce ──
+// Llamada desde onStockUpdated() ante cualquier cambio de stock (confirmar/
+// revertir pedido, ajuste manual, nuevo ingreso). Junta cambios seguidos y
+// publica UNA sola vez ~2.5s después del último. Solo actúa si la nube está
+// configurada; si no, no hace nada (silencioso).
+let _autoPublishTimer = null;
+function scheduleAutoPublish() {
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
+  if (typeof scLibReady === 'function' && !scLibReady()) return;
+  clearTimeout(_autoPublishTimer);
+  _autoPublishTimer = setTimeout(() => {
+    if (typeof publishCatalog === 'function') publishCatalog({ auto: true });
+  }, 2500);
 }
 
 // ════════════════════════════════════════════════════════════════════
