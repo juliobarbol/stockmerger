@@ -3315,7 +3315,10 @@ const Store = (function () {
   function remove(key) {
     _mem.delete(key);
     if (_db) { _idbDelete(_db, key).catch(() => {}); }
-    else if (_hasLS) { try { localStorage.removeItem(key); } catch (e) {} }
+    // Borrar SIEMPRE de localStorage también: si no, get() cae al valor viejo
+    // del localStorage (que quedó como respaldo de la migración) y "resucita"
+    // la clave borrada. Esto rompía, p.ej., "Resetear stock".
+    if (_hasLS) { try { localStorage.removeItem(key); } catch (e) {} }
   }
 
   function _scheduleFlush() { clearTimeout(_flushT); _flushT = setTimeout(_flush, 300); }
@@ -5055,7 +5058,7 @@ function offerResetInitialStock() {
   if (!confirm(msg)) return;
   setInitialStockFlag(false);
   if (typeof checkReady === 'function') checkReady();
-  toast('Botón "Cargar stock inicial" disponible otra vez.', 'ok');
+  toast('Listo ✓ Subí arriba: elegí el archivo y tocá "Cargar stock inicial" para reemplazar el stock.', 'ok');
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -9611,43 +9614,49 @@ function _doRevertReceivedOrder(localId) {
     return;
   }
 
-  // Verificar contra el stock actual: si entre tanto se confirmó otro pedido
-  // sobre los mismos productos, restaurar podría sobrepasar el stock real.
-  // Mostramos al operador qué pasaría.
-  const conflictos = [];
+  // Detectar si hubo movimientos intermedios sobre estos productos (otro
+  // pedido, un ingreso, un ajuste manual) desde que se confirmó. Esto YA NO
+  // es un problema: la restauración suma de vuelta exactamente lo que este
+  // pedido descontó (por DELTA), así que los movimientos intermedios se
+  // preservan en lugar de pisarse. Lo dejamos solo como aviso informativo.
+  const movidos = [];
   order.confirmSnapshot.forEach(snap => {
     const cur = state.merged.find(s => s._key === snap.key);
+    const label = (cur && cur.product)
+      || (order.items.find(it => it.key === snap.key) || {}).label
+      || snap.key;
     if (!cur) {
-      conflictos.push(`${snap.key}: el producto ya no está en el stock`);
+      movidos.push(`${label}: el producto ya no está en el stock (no se puede restaurar)`);
       return;
     }
     if (cur.qty !== snap.qtyAfter) {
-      conflictos.push(
-        `${snap.key}: stock actual (${cur.qty}) difiere del esperado (${snap.qtyAfter})`
-      );
+      movidos.push(`${label}: tuvo movimientos desde la confirmación`);
     }
   });
 
   let msg = `¿Revertir la confirmación de este pedido?\n\n`;
-  msg += `Esto va a restaurar ${order.confirmSnapshot.length} producto(s) al stock que tenían antes.\n`;
-  if (conflictos.length) {
-    msg += `\n⚠️ ATENCIÓN: el stock cambió desde la confirmación. Si revertís:\n`;
-    msg += conflictos.slice(0, 3).map(s => '  • ' + s).join('\n');
-    if (conflictos.length > 3) msg += `\n  ... y ${conflictos.length - 3} más`;
-    msg += `\n\nLas cantidades restauradas pueden no coincidir con la realidad física.`;
+  msg += `Se van a devolver al stock las unidades que este pedido había descontado ` +
+         `(${order.confirmSnapshot.length} producto/s).\n`;
+  if (movidos.length) {
+    msg += `\nℹ️ Algunos productos tuvieron movimientos desde la confirmación. ` +
+           `No hay problema: se suma de vuelta exactamente lo descontado, respetando esos movimientos.\n`;
+    msg += movidos.slice(0, 3).map(s => '  • ' + s).join('\n');
+    if (movidos.length > 3) msg += `\n  ... y ${movidos.length - 3} más`;
   }
   msg += `\n\n¿Continuar?`;
 
   if (!confirm(msg)) return;
 
-  // Restaurar el stock
+  // Restaurar el stock por DELTA: sumamos de vuelta exactamente lo que este
+  // pedido descontó (qtyBefore - qtyAfter), en lugar de fijar el valor
+  // absoluto que tenía antes. Así, si entre la confirmación y la reversión
+  // hubo otros movimientos (otro pedido, un ingreso, un ajuste manual), esos
+  // cambios se preservan en vez de pisarse.
   order.confirmSnapshot.forEach(snap => {
     const cur = state.merged.find(s => s._key === snap.key);
-    if (!cur) return; // producto desapareció — no podemos restaurar
-    // Restauramos al valor "antes" — esto puede ser inexacto si entre tanto
-    // otros pedidos descontaron del mismo producto. Lo aceptamos como
-    // limitación conocida (los conflictos ya fueron mostrados).
-    cur.qty   = snap.qtyBefore;
+    if (!cur) return; // producto eliminado del stock — no se puede restaurar
+    const descontado = Math.max(0, (snap.qtyBefore || 0) - (snap.qtyAfter || 0));
+    cur.qty   = Math.max(0, (cur.qty || 0) + descontado);
     cur.total = cur.qty;
   });
 
