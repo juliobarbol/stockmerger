@@ -9015,19 +9015,26 @@ function scheduleAutoPublish() {
 //   create policy "orders_insert" on orders for insert with check (true);
 //   create index if not exists orders_ns_created_idx on orders (ns, created_at desc);
 // ════════════════════════════════════════════════════════════════════
-async function pullOrders() {
+async function pullOrders(opts = {}) {
+  // silent: pull automático (arranque / realtime / online). No muestra toasts
+  // de error/guard ni el "no hay pedidos nuevos"; sí avisa si trajo pedidos.
+  const silent = !!opts.silent;
   if (!scLibReady()) {
-    toast('La nube no está disponible (¿sin internet?). Importá el pedido por Excel.', 'err');
-    scStatus('Librería de Supabase no disponible.', 'err');
+    if (!silent) {
+      toast('La nube no está disponible (¿sin internet?). Importá el pedido por Excel.', 'err');
+      scStatus('Librería de Supabase no disponible.', 'err');
+    }
     return;
   }
   if (!scIsConfigured()) {
-    toast('Configurá primero la URL y la anon key de Supabase.', 'err');
-    scStatus('Falta configurar la nube.', 'err');
+    if (!silent) {
+      toast('Configurá primero la URL y la anon key de Supabase.', 'err');
+      scStatus('Falta configurar la nube.', 'err');
+    }
     return;
   }
   if (!state.merged.length) {
-    toast('Cargá el stock en la pestaña Archivos antes de traer pedidos.', 'err');
+    if (!silent) toast('Cargá el stock en la pestaña Archivos antes de traer pedidos.', 'err');
     return;
   }
 
@@ -9057,8 +9064,10 @@ async function pullOrders() {
       return;
     }
     if (!data || !data.length) {
-      toast('No hay pedidos nuevos en la nube.', 'ok');
-      scStatus('Sin pedidos nuevos.', 'ok');
+      if (!silent) {
+        toast('No hay pedidos nuevos en la nube.', 'ok');
+        scStatus('Sin pedidos nuevos.', 'ok');
+      }
       return;
     }
 
@@ -9098,7 +9107,7 @@ async function pullOrders() {
     if (dups > 0)     extras.push(`${dups} ya estaban`);
     if (fallidos > 0) extras.push(`${fallidos} sin items válidos`);
     if (extras.length) msg += ` (${extras.join(', ')})`;
-    toast(msg, imported > 0 ? 'ok' : '');
+    if (!silent || imported > 0) toast(msg, imported > 0 ? 'ok' : '');
     scStatus(msg, 'ok');
   } catch (e) {
     console.error('pullOrders exception:', e);
@@ -9151,9 +9160,14 @@ document.addEventListener('visibilitychange', () => {
 // orders) → dispara pullOrders() → el pedido aparece solo en la pestaña
 // Pedidos, sin tocar "☁⬇ De la nube".
 //
+// Además, al ABRIR la app (y al volver online / al frente) hace una
+// PUESTA AL DÍA: trae los pedidos que entraron mientras la app estaba
+// cerrada o sin conexión. Realtime solo avisa de inserts POSTERIORES a la
+// suscripción, así que sin esta puesta al día los pedidos hechos con la
+// central cerrada no aparecían hasta que llegaba un pedido nuevo.
+//
 // La central compartida entre dispositivos la maneja sync_rows.js
-// (sincronización fila por fila). Acá ya NO se sincroniza el estado
-// completo (eso fue retirado en la Etapa 4).
+// (sincronización fila por fila).
 //
 // Habilitar en Supabase (una vez): alter publication supabase_realtime
 //   add table orders;  (las tablas de sync_rows ya se habilitaron aparte)
@@ -9161,6 +9175,8 @@ document.addEventListener('visibilitychange', () => {
 
 let _rtOrdersCh = null;
 let _rtOrdersDeb = null;
+let _rtStartRetries = 0;     // reintentos de suscripción si la lib aún no cargó
+let _rtCatchUpRetries = 0;   // reintentos de la puesta al día si falta lib/stock
 
 function rtStopCentral() {
   const client = (typeof scClient === 'function') ? scClient() : null;
@@ -9168,14 +9184,41 @@ function rtStopCentral() {
   _rtOrdersCh = null;
 }
 
+// Puesta al día de pedidos: trae los que entraron mientras la app estaba
+// cerrada / sin conexión. Silenciosa (no muestra "no hay pedidos nuevos");
+// si trae pedidos, pullOrders los avisa igual. Reintenta un rato si todavía
+// no cargó la librería de Supabase o el stock (el guard de pullOrders exige
+// state.merged cargado).
+function rtCatchUpOrders() {
+  if (typeof pullOrders !== 'function') return;
+  const cloudReady = (typeof scLibReady === 'function' && scLibReady())
+                  && (typeof scIsConfigured === 'function' && scIsConfigured());
+  const stockReady = Array.isArray(state.merged) && state.merged.length > 0;
+  if (!cloudReady || !stockReady) {
+    if (_rtCatchUpRetries < 12) {       // ~12 intentos × 1.5s ≈ 18s de margen
+      _rtCatchUpRetries++;
+      setTimeout(rtCatchUpOrders, 1500);
+    }
+    return;
+  }
+  _rtCatchUpRetries = 0;
+  pullOrders({ silent: true });
+}
+
 function rtStartCentral() {
-  if (!scLibReady() || !scIsConfigured()) return;
+  if (!scLibReady() || !scIsConfigured()) {
+    // La librería puede tardar en cargar desde la CDN: reintentar un rato
+    // en vez de quedarse sin realtime ni puesta al día.
+    if (_rtStartRetries < 12) { _rtStartRetries++; setTimeout(rtStartCentral, 1500); }
+    return;
+  }
+  _rtStartRetries = 0;
   const client = scClient();
   if (!client) return;
   rtStopCentral();
   const c = scGetConfig();
 
-  // 1) Pedidos entrantes
+  // 1) Pedidos entrantes en vivo (inserts posteriores a esta suscripción)
   _rtOrdersCh = client
     .channel('rt-orders-' + c.ns)
     .on('postgres_changes',
@@ -9188,6 +9231,10 @@ function rtStartCentral() {
       })
     .subscribe();
 
+  // 2) Puesta al día: pedidos que entraron mientras la app estaba cerrada.
+  _rtCatchUpRetries = 0;
+  rtCatchUpOrders();
+
   // (La central compartida ahora la maneja sync_rows.js, fila por fila.)
 }
 
@@ -9197,6 +9244,14 @@ if (document.readyState === 'loading') {
 } else {
   setTimeout(rtStartCentral, 2500);
 }
+
+// Al volver la conexión o traer la app al frente: re-suscribir y ponerse al
+// día (el websocket puede haberse cortado en segundo plano, y pueden haber
+// entrado pedidos mientras tanto).
+window.addEventListener('online', () => { _rtStartRetries = 0; rtStartCentral(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { _rtStartRetries = 0; rtStartCentral(); }
+});
 
 
 // ════════════════════════════════════════════════════════════════════
