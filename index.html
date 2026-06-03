@@ -249,8 +249,13 @@ tr.row-lowstock td{background:#f59e0b08}
 .stock-results .cards-list{padding-bottom:.75rem}
 
 /* DUPLICATE OVERLAY */
-.overlay{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
+/* z-index por encima de .tab-bar (50): el overlay es un paso modal a pantalla
+   completa (revisión de duplicados, ajuste manual), así que debe tapar la
+   barra de pestañas. Antes quedaba en 40 y la barra se dibujaba encima,
+   ocultando el final del contenido (la última tarjeta y sus botones). */
+.overlay{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column}
 .overlay-header{display:flex;align-items:center;gap:.75rem;padding:.9rem 1rem;border-bottom:1px solid var(--border);background:var(--bg)}
+.overlay .scroll-body{padding-bottom:calc(1rem + env(safe-area-inset-bottom,0px))}
 
 /* RESPONSIVE */
 @media(min-width:680px){
