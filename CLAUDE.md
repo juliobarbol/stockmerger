@@ -28,31 +28,66 @@ Vive en su propio repo (`juliobarbol/stockvendedor`).
 - Dependencias externas por CDN: librería de Supabase (jsdelivr), `xlsx`
   (SheetJS), `jspdf` + `jspdf-autotable`, fuentes de Google.
 
-### Módulos internos
+## ⚠️ Trabajar sin quemar tokens — LEER PRIMERO
 
-Aunque es un solo archivo, el JS está organizado en "módulos" marcados con
-banners `// XXX.JS — ...`. Para ubicarte, buscá el banner:
+`index.html` pesa **~485 KB / ~12.100 líneas** (≈120k tokens). **Leerlo entero
+gasta un contexto completo de una.** Pero está limpio y modularizado: líneas
+cortas, sin minificados ni base64, banners `// XXX.JS`. Por eso la **lectura
+por rangos de línea es exacta y barata**. Reglas:
 
-| Módulo | Rol |
+1. **NUNCA** hagas `Read` del archivo completo (sin `offset`/`limit`). Tampoco
+   `cat`/`sed` de todo el archivo.
+2. Para localizar algo: `Grep -n` del símbolo/función/string → te da la línea
+   exacta → `Read` con `offset`/`limit` solo ese tramo (±30 líneas).
+3. Para saltar a un módulo: usá la columna **Líneas** de la tabla de abajo y
+   `Read` ese rango directamente.
+4. Para **editar**: `Grep` el `old_string` único → `Read` solo esa franja →
+   `Edit`. No vuelvas a leer el archivo después de editar (el harness ya valida
+   el cambio).
+5. **CSS (`<style>` 22–2267)** y **HTML/markup (2268–3190)** casi nunca hacen
+   falta para lógica de negocio — no los leas salvo trabajo de estilos o
+   maquetado.
+6. Contrato compartido con StockVendedor: `Grep` el símbolo en **ambos** repos
+   en vez de abrir los dos `index.html`.
+
+### Mapa de navegación (rangos de línea)
+
+| Región | Líneas |
 |---|---|
-| `STORE.JS` | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
-| `STATE.JS` | Estado global (`state`) + persistencia en localStorage. |
-| `UTILS.JS` | Utilidades compartidas (normalización de claves, hashing, etc.). |
-| `FILES.JS` | Carga de Excel de stock + mapper de columnas. |
-| `MERGE.JS` | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
-| `UI.JS` | Render de stock, navegación, filtros, cards mobile con virtual scroll. |
-| `EXPORT.JS` | Exportar Excel / CSV / reportes de alertas. |
-| `PRICES.JS` | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
-| `BACKUP.JS` | Exportar/importar TODA la config como JSON. Incluye `buildVendorPayload()`. |
-| `BACKUPS.JS` | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
-| `SUPABASE.JS` | Sincronización **opcional** con la nube. Config, publicar catálogo, traer pedidos. |
-| `REALTIME.JS` | Supabase Realtime: escucha `orders` nuevos. |
-| `ORDERS.JS` | Pedidos recibidos de vendedores (`state.receivedOrders`). |
-| `ORDERS_UI.JS` | UI de la pestaña Pedidos. |
-| `DOCS.JS` | Generación de PDF (presupuesto / remito / nota de pedido). |
-| `ANALYTICS.JS` / `ANALYTICS_UI.JS` | Agregaciones de ventas y su UI. |
-| `SYNC_ROWS.JS` | Sync **fila por fila** entre varios dispositivos de la central (beta). |
-| `BOOT.JS` | Orquesta el arranque sobre IndexedDB. |
+| `<head>` + scripts CDN | 1–21 |
+| **CSS** (`<style>`) | 22–2267 |
+| **HTML / markup** (body, pestañas) | 2268–3190 |
+| Script de arranque temprano | 3191–3201 |
+| **JS principal** (`<script>`) | 3202–12124 |
+
+### Módulos internos (dentro del JS principal)
+
+Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
+
+| Módulo | Líneas | Rol |
+|---|---|---|
+| `STORE.JS` | 3204–3369 | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
+| `STATE.JS` | 3370–3940 | Estado global (`state`) + persistencia en localStorage. |
+| `UTILS.JS` | 3941–4047 | Utilidades compartidas (normalización de claves `_key`, hashing, etc.). |
+| `FILES.JS` | 4048–4413 | Carga de Excel de stock + mapper de columnas. |
+| `MERGE.JS` | 4414–5332 | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
+| `UI.JS` | 5333–6065 | Render de stock, navegación, filtros, cards mobile con virtual scroll. |
+| `EXPORT.JS` | 6066–6204 | Exportar Excel / CSV / reportes de alertas. |
+| `PRICES.JS` | 6205–7949 | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
+| `BACKUP.JS` | 7950–8482 | Exportar/importar TODA la config como JSON. Incluye `buildVendorPayload()`. |
+| `BACKUPS.JS` | 8483–8685 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
+| `SUPABASE.JS` | 8686–9160 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos. |
+| `REALTIME.JS` | 9161–9262 | Supabase Realtime: escucha `orders` nuevos. |
+| `ORDERS.JS` | 9263–9910 | Pedidos recibidos de vendedores (`state.receivedOrders`). |
+| `ORDERS_UI.JS` | 9911–10248 | UI de la pestaña Pedidos. |
+| `DOCS.JS` | 10249–10742 | Generación de PDF (presupuesto / remito / nota de pedido). |
+| `ANALYTICS.JS` | 10743–11070 | Agregaciones de ventas (solo cálculo, sin DOM). |
+| `ANALYTICS_UI.JS` | 11071–11570 | UI de la pestaña Análisis. |
+| `SYNC_ROWS.JS` | 11571–12064 | Sync **fila por fila** entre dispositivos de la central (beta). |
+| `BOOT.JS` | 12065–12123 | Orquesta el arranque sobre IndexedDB. |
+
+> Los rangos se mueven al editar. Si algo no cuadra, reubicá con
+> `Grep -n "^// NOMBRE.JS"` y leé el banner.
 
 ### Pestañas de la UI
 
