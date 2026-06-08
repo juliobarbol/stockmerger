@@ -8544,7 +8544,10 @@ function bkDownloadNow() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// CAPA 2 — Snapshots en Supabase
+// CAPA 2 — Snapshots en Supabase Storage (bucket "backups")
+// Cada snapshot es un archivo JSON en {ns}/{timestamp}-{kind}.json.
+// Requiere crear el bucket "backups" en el dashboard de Supabase con
+// la política RLS que permita insert/select/delete al rol anon.
 // ════════════════════════════════════════════════════════════════════
 function _bkReady() {
   return typeof scLibReady === 'function' && scLibReady()
@@ -8553,33 +8556,35 @@ function _bkReady() {
 }
 
 async function bkMaybeAutoSnapshot() {
-  if (_bkSnapBusy) return;                 // ya hay uno en curso
+  if (_bkSnapBusy) return;
   if (!_bkReady()) return;
-  // Freno SINCRÓNICO: como máximo uno cada BK_MIN_HOURS en este equipo.
   const lastLocal = _bkNum('bk_last_snapshot');
   if (Date.now() - lastLocal < BK_MIN_HOURS * 3600000) return;
   _bkSnapBusy = true;
-  // Marcar YA (antes del await) para bloquear cualquier reentrada inmediata.
   Store.set('bk_last_snapshot', String(Date.now()));
   try {
     const client = scClient(); const ns = scGetConfig().ns;
-    // Respaldo: si OTRO equipo ya hizo una auto reciente, no duplicar.
-    const { data } = await client.from('backups').select('created_at')
-      .eq('ns', ns).eq('kind', 'auto').order('created_at', { ascending: false }).limit(1);
-    const lastTs = (data && data[0]) ? new Date(data[0].created_at).getTime() : 0;
+    const { data } = await client.storage.from('backups').list(ns, {
+      limit: 5, sortBy: { column: 'created_at', order: 'desc' }
+    });
+    const autos = (data || []).filter(f => f.name.includes('-auto'));
+    const lastTs = autos.length ? new Date(autos[0].created_at).getTime() : 0;
     if (Date.now() - lastTs < BK_MIN_HOURS * 3600000) return;
     await bkSnapshotCreate('auto');
   } catch (e) { console.warn('auto-snapshot:', e && e.message); }
   finally { _bkSnapBusy = false; }
 }
 
-async function bkSnapshotCreate(kind = 'manual', label) {
+async function bkSnapshotCreate(kind = 'manual') {
   if (!_bkReady()) return { ok: false, reason: 'sin-nube' };
   const client = scClient(); const ns = scGetConfig().ns;
   try {
     const payload = buildBackupPayload(false);
-    const sizeKb = Math.round(JSON.stringify(payload).length / 1024);
-    const { error } = await client.from('backups').insert({ ns, kind, label: label || null, payload, size_kb: sizeKb });
+    const json = JSON.stringify(payload);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const path = `${ns}/${ts}-${kind}.json`;
+    const blob = new Blob([json], { type: 'application/json' });
+    const { error } = await client.storage.from('backups').upload(path, blob);
     if (error) { console.warn('snapshot:', error.message); return { ok: false }; }
     Store.set('bk_last_snapshot', String(Date.now()));
     await _bkPrune(ns);
@@ -8590,11 +8595,12 @@ async function bkSnapshotCreate(kind = 'manual', label) {
 async function _bkPrune(ns) {
   const client = scClient();
   try {
-    const { data } = await client.from('backups').select('id, created_at')
-      .eq('ns', ns).order('created_at', { ascending: false });
+    const { data } = await client.storage.from('backups').list(ns, {
+      limit: 100, sortBy: { column: 'created_at', order: 'desc' }
+    });
     if (data && data.length > BK_KEEP) {
-      const viejas = data.slice(BK_KEEP).map(r => r.id);
-      await client.from('backups').delete().in('id', viejas);
+      const viejas = data.slice(BK_KEEP).map(f => `${ns}/${f.name}`);
+      await client.storage.from('backups').remove(viejas);
     }
   } catch (e) {}
 }
@@ -8603,9 +8609,15 @@ async function bkSnapshotList() {
   if (!_bkReady()) return [];
   const client = scClient(); const ns = scGetConfig().ns;
   try {
-    const { data } = await client.from('backups').select('id, kind, label, size_kb, created_at')
-      .eq('ns', ns).order('created_at', { ascending: false }).limit(50);
-    return data || [];
+    const { data } = await client.storage.from('backups').list(ns, {
+      limit: 50, sortBy: { column: 'created_at', order: 'desc' }
+    });
+    return (data || []).map(f => ({
+      id: `${ns}/${f.name}`,
+      kind: f.name.includes('-auto') ? 'auto' : 'manual',
+      size_kb: f.metadata && f.metadata.size ? Math.round(f.metadata.size / 1024) : null,
+      created_at: f.created_at,
+    }));
   } catch (e) { return []; }
 }
 
@@ -8613,11 +8625,11 @@ async function bkSnapshotRestore(id) {
   if (!_bkReady()) return false;
   const client = scClient();
   try {
-    const { data } = await client.from('backups').select('payload').eq('id', id).maybeSingle();
-    if (!data || !data.payload) return false;
-    // Aplicar el estado de la foto. Esto re-sincroniza por filas (sync_rows
-    // detecta los cambios y los sube), propagando la restauración a todos.
-    applyBackupData(data.payload, { askConfirm: false, render: true });
+    const { data, error } = await client.storage.from('backups').download(id);
+    if (error || !data) return false;
+    const text = await data.text();
+    const payload = JSON.parse(text);
+    applyBackupData(payload, { askConfirm: false, render: true });
     return true;
   } catch (e) { console.warn('restore:', e && e.message); return false; }
 }
@@ -8638,7 +8650,7 @@ async function bkRenderList() {
     const tag = b.kind === 'auto' ? 'auto' : 'manual';
     return `<div class="bk-item" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border,#333)">
       <span style="font-size:.75rem">${fecha} <span style="opacity:.6">· ${tag}${b.size_kb ? ' · ' + b.size_kb + 'KB' : ''}</span></span>
-      <button class="btn-backup" style="padding:.3rem .6rem" onclick="bkRestoreUI('${b.id}','${fecha}')">↩ Restaurar</button>
+      <button class="btn-backup" style="padding:.3rem .6rem" data-bkid="${b.id}" data-fecha="${fecha}" onclick="bkRestoreUI(this.dataset.bkid,this.dataset.fecha)">↩ Restaurar</button>
     </div>`;
   }).join('');
 }
