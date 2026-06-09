@@ -14,6 +14,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<!-- TODO(auditoría A5): pinear supabase-js a versión exacta (@2.x.y) y agregar
+     integrity+crossorigin a los 4 scripts CDN. Hacerlo con red: resolver la
+     versión en https://www.jsdelivr.com/package/npm/@supabase/supabase-js y
+     generar SRI en https://www.srihash.org/ — y probar antes de publicar. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 
@@ -3558,6 +3562,33 @@ function loadChinaPrices() {
   try { state.chinaPrices = JSON.parse(Store.get('chinaprices') || '{}'); }
   catch (e) { state.chinaPrices = {}; }
 }
+
+// Migración (auditoría 2026-06): importChinaList guardaba las keys con
+// normalizeKey() (MAYÚSCULAS), pero todos los lookups usan _key en minúsculas
+// (normalize()) — esos precios quedaban invisibles para el cálculo. Re-keyea
+// las entradas viejas al formato correcto. Idempotente: si la key ya está
+// normalizada, no hace nada.
+function _migrateChinaKeys() {
+  let migrated = 0;
+  for (const k of Object.keys(state.chinaPrices)) {
+    const nk = normalize(k);
+    if (nk === k || !nk) continue;
+    if (state.chinaPrices[nk] == null) {
+      state.chinaPrices[nk] = state.chinaPrices[k];
+      if (state.chinaSources && state.chinaSources[k] != null && state.chinaSources[nk] == null) {
+        state.chinaSources[nk] = state.chinaSources[k];
+      }
+    }
+    delete state.chinaPrices[k];
+    if (state.chinaSources) delete state.chinaSources[k];
+    migrated++;
+  }
+  if (migrated > 0) {
+    console.log(`[migración chinaPrices] ${migrated} key(s) re-normalizadas a minúsculas`);
+    saveChinaPrices();
+    if (typeof saveChinaSources === 'function' && state.chinaSources) saveChinaSources();
+  }
+}
 function saveChinaPrices() {
   _safeSetItem('chinaprices', JSON.stringify(state.chinaPrices), 'los precios China');
 }
@@ -3583,6 +3614,7 @@ function saveChinaSources() {
 }
 
 loadChinaSources();
+_migrateChinaKeys(); // después de cargar AMBOS mapas (prices + sources)
 
 // ── Lista de pendientes de inferencia (v25b) ──
 // Productos cuyo precio L7/VIP fue importado pero NO se pudo calcular el
@@ -3977,6 +4009,26 @@ async function computeIngestHash(productMap) {
 // ════════════════════════════════════════════════════════════════════
 
 // ══ UTILS ══
+// Escapa un valor para incrustarlo como string JS ('…') dentro de un atributo
+// HTML entre comillas dobles, p. ej. onclick="fn('${escJsAttr(x)}')".
+// Dos capas: primero escape de JS (backslash, comilla, saltos de línea) y
+// después escape de HTML — el parser decodifica las entidades del atributo
+// ANTES de ejecutar el JS, así que ambas capas son necesarias. Escapar solo
+// la comilla simple (como se hacía antes) deja pasar `\` y `&#39;`.
+function escJsAttr(s) {
+  return String(s ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r?\n/g, '\\n')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ⚠️ _key SIEMPRE se genera con normalize() — la app hermana (StockVendedor)
+// usa esta MISMA función, carácter por carácter. Si divergen, los pedidos
+// dejan de matchear contra el stock.
 function normalize(s) {
   return String(s).trim().toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -4103,7 +4155,10 @@ function detectHeaderRow(ws) {
     }).length;
     if (score > bestScore) { bestScore = score; bestRow = i; }
   }
-  return bestRow;
+  // confident: al menos una celda matcheó una palabra clave de encabezado.
+  // Si no matcheó nada, bestRow queda en 0 — puede ser un Excel SIN fila de
+  // encabezado (la fila 0 son datos) y conviene avisar al usuario.
+  return { row: bestRow, confident: bestScore > 0 };
 }
 
 // ══ FILE LOADING ══
@@ -4120,7 +4175,8 @@ function processFile(file, id) {
     try {
       const wb = XLSX.read(evt.target.result, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const headerRow = detectHeaderRow(ws);
+      const hdr = detectHeaderRow(ws);
+      const headerRow = hdr.row;
       const data = XLSX.utils.sheet_to_json(ws, { defval: '', range: headerRow });
       if (!data.length) { toast('El archivo está vacío o no se pudo leer el encabezado.', 'err'); return; }
       const cleaned = data.filter(row => Object.values(row).some(v => String(v).trim() !== ''));
@@ -4142,7 +4198,11 @@ function processFile(file, id) {
       const icon = document.getElementById('icon' + id);
       icon.className = 'upload-icon-wrap icon-ok'; icon.textContent = '✅';
       updateMapper(); checkReady();
-      toast('"' + file.name + '" cargado — ' + cleaned.length + ' productos', 'ok');
+      if (!hdr.confident) {
+        toast('⚠️ No se detectó una fila de encabezado clara — se asumió la fila 1. Verificá el mapeo de columnas antes de ingresar.', 'err');
+      } else {
+        toast('"' + file.name + '" cargado — ' + cleaned.length + ' productos', 'ok');
+      }
     } catch (err) {
       console.error('Error al leer archivo:', err);
       toast('Error: ' + (err.message || 'formato no reconocido'), 'err');
@@ -5497,7 +5557,7 @@ function buildCardHTML(r) {
   if (state.colAx  && r.extraA  !== '') extras += `<div class="card-extra">📦 ${escapeHtml(state.colAx)}: ${escapeHtml(r.extraA)}</div>`;
   if (state.colAx2 && r.extraA2 !== '') extras += `<div class="card-extra">📦 ${escapeHtml(state.colAx2)}: ${escapeHtml(r.extraA2)}</div>`;
   const minVal = state.minStock[r._key] ?? '';
-  const safeKey = r._key.replace(/'/g, "\\'");
+  const safeKey = escJsAttr(r._key);
   return `<div class="${cardCls}">
     <div class="card-top">
       <div class="card-product">${escapeHtml(r.product)}</div>
@@ -5528,7 +5588,7 @@ function renderCards(data) {
     // para que arranque con ese nombre prellenado (si el operador decide
     // crear el producto que no existe).
     const currentQuery = (document.getElementById('searchInput')?.value || '').trim();
-    const safeQuery = currentQuery.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const safeQuery = escJsAttr(currentQuery);
     list.innerHTML = `
       <div class="empty-state">
         <div class="ei">🔍</div>
@@ -5680,7 +5740,7 @@ function renderDecisions() {
 
   document.getElementById('decisionsList').innerHTML = filtered.map(([memKey, v]) => {
     const isMerge = v.decision === 'merge';
-    const safeKey = memKey.replace(/'/g, "\\'");
+    const safeKey = escJsAttr(memKey);
     return `<div class="dec-card ${isMerge ? 'dec-merge' : 'dec-keep'}">
       <div class="dec-label ${isMerge ? 'lbl-merge' : 'lbl-keep'}">${isMerge ? '✅ Fusionados' : '✗ Separados'}</div>
       <div class="dec-names">
@@ -5820,8 +5880,7 @@ function renderManualSearchResults(query) {
   }
 
   // Escape defensivo del nombre buscado (para el atributo onclick).
-  // Reemplazamos comilla simple por '\'' y backslash por '\\\\'.
-  const safeName = trimmed.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const safeName = escJsAttr(trimmed);
   const safeNameHtml = escapeHtml(trimmed);
 
   // Construir la lista de resultados (si hay) y siempre agregar el CTA
@@ -5838,7 +5897,7 @@ function renderManualSearchResults(query) {
     </button>`;
   } else {
     html += top.map(m => {
-      const safeKey = (m.item._key || '').replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const safeKey = escJsAttr(m.item._key || '');
       const extras = [m.item.extraA, m.item.extraA2].filter(Boolean).join(' · ');
       return `<div class="manual-result-card" onclick="showAdjustForm('${safeKey}')">
         <div class="manual-result-info">
@@ -6532,7 +6591,9 @@ function importChinaList(event) {
         if (!prod || precio == null) { ignorados++; continue; }
         const precioN = parseFloat(precio);
         if (isNaN(precioN) || precioN <= 0) { ignorados++; continue; }
-        const key = normalizeKey(prod);
+        // normalize() y NO otra cosa: chinaPrices se indexa por la misma
+        // _key que state.merged (ver bug de keys en MAYÚSCULAS, auditoría 2026-06)
+        const key = normalize(prod);
         if (!key) { ignorados++; continue; }
         state.chinaPrices[key] = precioN;
         state.chinaSources[key] = 'imported'; // v25b: marcar origen
@@ -6586,14 +6647,8 @@ function _findProductPriceColumns(rows) {
   return null;
 }
 
-// Normalizar un nombre de producto a key (usado para indexar chinaPrices y merged)
-function normalizeKey(s) {
-  if (s == null) return '';
-  return String(s)
-    .toUpperCase()
-    .trim()
-    .replace(/\s+/g, ' ');
-}
+// (eliminada normalizeKey(): generaba keys en MAYÚSCULAS que no matcheaban
+// con las _key de normalize(). Toda key de producto se genera con normalize().)
 
 // ════════════════════════════════════════════════════════════════════
 // INFERENCIA DE PRECIO CHINA DESDE L7 O VIP (v25b)
@@ -6994,10 +7049,10 @@ function renderInferPendingList() {
     // Botón de acción según la razón
     let actionBtn = '';
     if (p.reason === 'no_rubro') {
-      actionBtn = `<button class="ipr-action" onclick="openAssignRubro('${escAttr(p.key)}')">Asignar rubro</button>`;
+      actionBtn = `<button class="ipr-action" onclick="openAssignRubro('${escJsAttr(p.key)}')">Asignar rubro</button>`;
     } else if (p.reason === 'no_multi') {
       // El rubro existe pero no tiene multi — atajo para definirlo
-      actionBtn = `<button class="ipr-action" onclick="openRubroEdit('${escAttr(p.rubro)}')">Definir multi</button>`;
+      actionBtn = `<button class="ipr-action" onclick="openRubroEdit('${escJsAttr(p.rubro)}')">Definir multi</button>`;
     }
     return `
       <div class="infer-pending-row">
@@ -7097,7 +7152,7 @@ function openAssignRubro(productKey) {
     html += `<div class="ar-chips">`;
     sortedConMulti.forEach(r => {
       const m = state.rubrosMultis[r];
-      html += `<button class="ar-chip ar-chip-ok" onclick="confirmAssignRubro('${escAttr(r)}')">
+      html += `<button class="ar-chip ar-chip-ok" onclick="confirmAssignRubro('${escJsAttr(r)}')">
         <span class="ar-chip-name">${escHtml(r)}</span>
         <span class="ar-chip-meta">L7×${m.l7} · VIP×${m.vip}</span>
       </button>`;
@@ -7108,7 +7163,7 @@ function openAssignRubro(productKey) {
     html += `<div class="ar-section-title">⚠ Rubros sin multiplicador definido</div>`;
     html += `<div class="ar-chips">`;
     sortedSinMulti.forEach(r => {
-      html += `<button class="ar-chip ar-chip-warn" onclick="confirmAssignRubro('${escAttr(r)}')">
+      html += `<button class="ar-chip ar-chip-warn" onclick="confirmAssignRubro('${escJsAttr(r)}')">
         <span class="ar-chip-name">${escHtml(r)}</span>
         <span class="ar-chip-meta">sin multi</span>
       </button>`;
@@ -7451,7 +7506,7 @@ function renderSinDefinirList() {
         <div class="sindef-name">${escHtml(rubro)}</div>
         <div class="sindef-count">${count} producto${count !== 1 ? 's' : ''} afectado${count !== 1 ? 's' : ''}</div>
       </div>
-      <button class="ipr-action" onclick="defineSinDefinirRubro('${escAttr(rubro)}')">Definir</button>
+      <button class="ipr-action" onclick="defineSinDefinirRubro('${escJsAttr(rubro)}')">Definir</button>
     </div>`).join('');
 }
 
@@ -7534,7 +7589,7 @@ function renderRubrosTable() {
       <td class="num">×${m.l7}</td>
       <td class="num">×${m.vip}</td>
       <td class="num"><span class="rubro-count">${count}</span></td>
-      <td><button class="btn-mini" onclick="openRubroEdit('${escHtml(rubro)}')">Editar</button></td>
+      <td><button class="btn-mini" onclick="openRubroEdit('${escJsAttr(rubro)}')">Editar</button></td>
     </tr>`;
   }).join('');
 }
@@ -7697,37 +7752,37 @@ function _buildProductRow(it) {
   if (_productFilter === 'sinchina') {
     // En el filtro "Sin precio China" el botón siempre carga China
     btnLabel = 'Cargar China';
-    btnAction = `openSetChinaPrice('${escAttr(it._key)}')`;
+    btnAction = `openSetChinaPrice('${escJsAttr(it._key)}')`;
     btnClass = ' btn-mini-warn';
   } else if (_productFilter === 'sinrubro') {
     // En "Sin rubro": priorizar asignar rubro o definir multi
     if (!tieneRubro) {
       btnLabel = 'Asignar rubro';
-      btnAction = `assignRubroToProduct('${escAttr(it._key)}')`;
+      btnAction = `assignRubroToProduct('${escJsAttr(it._key)}')`;
       btnClass = ' btn-mini-warn';
     } else {
       // Tiene rubro pero le falta multiplicador
       btnLabel = 'Definir multi';
-      btnAction = `openRubroEdit('${escAttr(rubroN)}')`;
+      btnAction = `openRubroEdit('${escJsAttr(rubroN)}')`;
       btnClass = ' btn-mini-warn';
     }
   } else {
     // Filtros "Todos" y "Personalizados": botón muestra el próximo paso que falta
     if (!tieneRubro) {
       btnLabel = 'Asignar rubro';
-      btnAction = `assignRubroToProduct('${escAttr(it._key)}')`;
+      btnAction = `assignRubroToProduct('${escJsAttr(it._key)}')`;
       btnClass = ' btn-mini-warn';
     } else if (!tieneMulti) {
       btnLabel = 'Definir multi';
-      btnAction = `openRubroEdit('${escAttr(rubroN)}')`;
+      btnAction = `openRubroEdit('${escJsAttr(rubroN)}')`;
       btnClass = ' btn-mini-warn';
     } else if (!tieneChina) {
       btnLabel = 'Cargar China';
-      btnAction = `openSetChinaPrice('${escAttr(it._key)}')`;
+      btnAction = `openSetChinaPrice('${escJsAttr(it._key)}')`;
       btnClass = ' btn-mini-warn';
     } else {
       btnLabel = hasOverride ? 'Editar' : 'Personalizar';
-      btnAction = `openProductOverride('${escAttr(it._key)}')`;
+      btnAction = `openProductOverride('${escJsAttr(it._key)}')`;
     }
   }
 
@@ -8250,13 +8305,18 @@ function applyBackupData(backup, opts = {}) {
       // un símbolo global accesible; replicamos la lógica para no
       // depender de ello.
       if (backup.mergedStock?.merged?.length) {
+        // Validación por producto: un backup corrupto/editado a mano con
+        // filas sin _key/product o qty no numérica rompía el render después
+        // de restaurar. Las filas inválidas se descartan con aviso.
+        let _descartados = 0;
         const productos = backup.mergedStock.merged.map(r => {
+          if (!r || typeof r !== 'object' || !r._key || !r.product) { _descartados++; return null; }
           if (r.qty == null && (r.qtyA != null || r.qtyB != null)) {
             // Migrar in-place
-            const qty = (r.qtyA || 0) + (r.qtyB || 0);
+            const qty = Math.max(0, (parseFloat(r.qtyA) || 0) + (parseFloat(r.qtyB) || 0));
             const migrated = {
-              _key:    r._key,
-              product: r.product,
+              _key:    String(r._key),
+              product: String(r.product),
               qty,
               total:   qty,
               extraA:  r.extraA  || '',
@@ -8264,13 +8324,23 @@ function applyBackupData(backup, opts = {}) {
             };
             return migrated;
           }
-          // Modelo nuevo — asegurar total
+          // Modelo nuevo — asegurar total y qty numérica
+          const qty = Math.max(0, parseFloat(r.qty) || 0);
           return {
             ...r,
-            qty: r.qty || 0,
-            total: r.qty || 0,
+            qty,
+            total: qty,
           };
-        });
+        }).filter(Boolean);
+
+        if (_descartados > 0) {
+          toast(`⚠️ ${_descartados} fila(s) inválidas del backup fueron descartadas (sin clave o sin nombre).`, 'err');
+        }
+        if (!productos.length) {
+          // No retornamos false: a esta altura precios/pedidos ya se
+          // aplicaron. Solo se saltea el reemplazo del stock.
+          toast('El stock del backup no pasó la validación — se conservó el stock actual.', 'err');
+        } else {
 
         state.merged  = productos;
         state.colAx   = backup.mergedStock.colAx  || '';
@@ -8298,6 +8368,7 @@ function applyBackupData(backup, opts = {}) {
           console.warn('Error al renderizar stock restaurado:', renderErr);
           // El stock quedó guardado igual — solo falló el render
         }
+        } // cierre del else (stock del backup válido)
       }
 
       // Invalidar índices en memoria
@@ -8382,7 +8453,19 @@ function buildVendorPayload() {
   const pricesVip  = {};
   let sinPrecioAct = 0, sinPrecioDist = 0, sinPrecioVip = 0;
 
+  // Detector de colisiones: normalize() puede colapsar nombres distintos a la
+  // misma _key ("Jabón-Florín" ≡ "Jabón Florín"). En los mapas de precios el
+  // último pisa al anterior SIN aviso — el vendedor vería un solo producto.
+  const _seenKeys = new Map(); // _key → product
+  const _colisiones = [];
+
   state.merged.forEach(it => {
+    const prevProduct = _seenKeys.get(it._key);
+    if (prevProduct !== undefined && prevProduct !== it.product) {
+      _colisiones.push(`"${prevProduct}" ≡ "${it.product}"`);
+    }
+    _seenKeys.set(it._key, it.product);
+
     const p = calcularPrecios(it._key);
     const meta = {
       label: it.product,
@@ -8416,6 +8499,11 @@ function buildVendorPayload() {
     marca:   r.extraA  || '',
     rubro:   r.extraA2 || '',
   }));
+
+  if (_colisiones.length) {
+    console.warn('buildVendorPayload: productos distintos con la misma _key normalizada:', _colisiones);
+    toast(`⚠️ ${_colisiones.length} par(es) de productos distintos comparten la misma clave normalizada y uno pisa al otro en el catálogo (ej: ${_colisiones[0]}). Renombralos para diferenciarlos.`, 'err');
+  }
 
   const payload = {
     _app:        'StockMerger',
@@ -8495,7 +8583,7 @@ function exportForVendor(list) {
 //            ya hay una reciente) y manuales. Restaurar = volver a una foto.
 //            Se conservan las últimas BK_KEEP; las viejas se podan.
 //
-//   Requiere la tabla `backups` (ver SQL Capa 2).
+//   Requiere el bucket `backups` en Supabase Storage (ver schema.sql).
 // ════════════════════════════════════════════════════════════════════
 
 const BK_THRESHOLD = 40;     // cambios para sugerir backup / disparar auto-snapshot
@@ -8985,7 +9073,7 @@ function retryCatalogPublishIfPending() {
   if (!_catalogPublishPending) return;
   if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
   if (typeof scLibReady === 'function' && !scLibReady()) return; // todavía sin librería
-  publishCatalog({ auto: true });
+  publishCatalog({ auto: true }).catch(e => console.warn('publishCatalog auto:', e));
 }
 
 // ── Auto-publicación con debounce ──
@@ -9004,7 +9092,7 @@ function scheduleAutoPublish() {
   }
   clearTimeout(_autoPublishTimer);
   _autoPublishTimer = setTimeout(() => {
-    if (typeof publishCatalog === 'function') publishCatalog({ auto: true });
+    if (typeof publishCatalog === 'function') publishCatalog({ auto: true }).catch(e => console.warn('publishCatalog auto:', e));
   }, 2500);
 }
 
@@ -9032,7 +9120,20 @@ function scheduleAutoPublish() {
 //   create policy "orders_insert" on orders for insert with check (true);
 //   create index if not exists orders_ns_created_idx on orders (ns, created_at desc);
 // ════════════════════════════════════════════════════════════════════
+// Evita pulls concurrentes (realtime debounced + botón manual + evento online
+// pueden coincidir): mientras hay uno en vuelo, los demás se descartan.
+let _pullOrdersBusy = false;
 async function pullOrders(opts = {}) {
+  if (_pullOrdersBusy) return;
+  _pullOrdersBusy = true;
+  try {
+    await _doPullOrders(opts);
+  } finally {
+    _pullOrdersBusy = false;
+  }
+}
+
+async function _doPullOrders(opts = {}) {
   // silent: pull automático (arranque / realtime / online). No muestra toasts
   // de error/guard ni el "no hay pedidos nuevos"; sí avisa si trajo pedidos.
   const silent = !!opts.silent;
@@ -9071,7 +9172,11 @@ async function pullOrders(opts = {}) {
       .eq('ns', c.ns)
       .order('created_at', { ascending: true })
       .limit(500);
-    if (lastPull) q = q.gt('created_at', lastPull);
+    // >= y no >: dos pedidos pueden compartir created_at (el cursor guarda el
+    // máximo visto). Con >, el segundo en llegar con el mismo timestamp se
+    // perdería para siempre. El re-fetch de la fila borde es inocuo: el dedupe
+    // por order_id en ingestVendorOrder lo descarta como duplicado.
+    if (lastPull) q = q.gte('created_at', lastPull);
 
     const { data, error } = await q;
     if (error) {
@@ -9219,7 +9324,7 @@ function rtCatchUpOrders() {
     return;
   }
   _rtCatchUpRetries = 0;
-  pullOrders({ silent: true });
+  pullOrders({ silent: true }).catch(e => console.warn('pullOrders silent:', e));
 }
 
 function rtStartCentral() {
@@ -9697,6 +9802,20 @@ function _doConfirmReceivedOrder(localId) {
 
   if (!confirm(confirmMsg)) return;
 
+  // ── Guard cross-tab ──
+  // El check de order.status de arriba es solo en memoria de ESTA pestaña.
+  // Si el mismo pedido está abierto en dos pestañas, ambas lo ven 'pendiente'
+  // y el stock se descontaría dos veces. localStorage es compartido y
+  // sincrónico entre pestañas del mismo origen: lo usamos como lock.
+  const confirmGuardKey = 'confirm_guard_' + (order.orderId || localId);
+  try {
+    if (localStorage.getItem(confirmGuardKey)) {
+      toast('Este pedido ya fue confirmado desde otra pestaña. Recargá la app para ver el estado actual.', 'err');
+      return;
+    }
+    localStorage.setItem(confirmGuardKey, new Date().toISOString());
+  } catch (e) { /* sin localStorage seguimos con el guard en memoria */ }
+
   // ── Descontar del stock ──
   // Lógica: stockItem.qty -= it.qty, con clamp en 0.
   // Trackeamos qué items NO se pudieron descontar para avisar al usuario.
@@ -9854,6 +9973,8 @@ function _doRevertReceivedOrder(localId) {
   // Volver al estado pendiente — el operador puede volver a confirmar o descartar
   order.status = 'pendiente';
   order.confirmedAt = null;
+  // Liberar el guard cross-tab para permitir una nueva confirmación
+  try { localStorage.removeItem('confirm_guard_' + (order.orderId || localId)); } catch (e) {}
   // Anotamos que fue revertido (para auditoría)
   order.revertHistory = order.revertHistory || [];
   order.revertHistory.push({
@@ -10091,22 +10212,22 @@ function renderOrderCard(order) {
   let buttonsHtml = '';
   if (order.status === 'pendiente') {
     buttonsHtml = `
-      <button class="ord-btn ord-btn-confirm" onclick="confirmReceivedOrder('${order.localId}')">✓ Confirmar</button>
-      <button class="ord-btn ord-btn-pdf"     onclick="openDocModal('${order.localId}')">📄 PDF</button>
-      <button class="ord-btn ord-btn-discard" onclick="discardReceivedOrder('${order.localId}')">Descartar</button>`;
+      <button class="ord-btn ord-btn-confirm" onclick="confirmReceivedOrder('${escJsAttr(order.localId)}')">✓ Confirmar</button>
+      <button class="ord-btn ord-btn-pdf"     onclick="openDocModal('${escJsAttr(order.localId)}')">📄 PDF</button>
+      <button class="ord-btn ord-btn-discard" onclick="discardReceivedOrder('${escJsAttr(order.localId)}')">Descartar</button>`;
   } else if (order.status === 'confirmado') {
     // Botón Revertir solo si tiene snapshot (pedidos confirmados antes
     // del feature de revert no lo tienen y no se pueden revertir)
     const revertBtn = (order.confirmSnapshot && order.confirmSnapshot.length)
-      ? `<button class="ord-btn ord-btn-revert" onclick="revertReceivedOrder('${order.localId}')">↶ Revertir</button>`
+      ? `<button class="ord-btn ord-btn-revert" onclick="revertReceivedOrder('${escJsAttr(order.localId)}')">↶ Revertir</button>`
       : '';
     buttonsHtml = `
-      <button class="ord-btn ord-btn-pdf"     onclick="openDocModal('${order.localId}')">📄 PDF</button>
+      <button class="ord-btn ord-btn-pdf"     onclick="openDocModal('${escJsAttr(order.localId)}')">📄 PDF</button>
       ${revertBtn}
-      <button class="ord-btn ord-btn-discard" onclick="deleteReceivedOrder('${order.localId}')">🗑 Eliminar</button>`;
+      <button class="ord-btn ord-btn-discard" onclick="deleteReceivedOrder('${escJsAttr(order.localId)}')">🗑 Eliminar</button>`;
   } else {
     buttonsHtml = `
-      <button class="ord-btn ord-btn-discard" onclick="deleteReceivedOrder('${order.localId}')">🗑 Eliminar</button>`;
+      <button class="ord-btn ord-btn-discard" onclick="deleteReceivedOrder('${escJsAttr(order.localId)}')">🗑 Eliminar</button>`;
   }
 
   // Si ya tiene docs generados, mostrar la lista
@@ -10126,6 +10247,15 @@ function renderOrderCard(order) {
   }).join('');
   const rest = order.items.length > 3 ? `<div class="ord-item-preview ord-rest">…y ${order.items.length - 3} más</div>` : '';
 
+  // Badge de incidencias en la tarjeta: sin esto, los faltantes/parciales
+  // solo se veían entrando al detalle y pasaban desapercibidos.
+  const nIssues = order.confirmIssues
+    ? ((order.confirmIssues.ignorados || []).length + (order.confirmIssues.parciales || []).length)
+    : 0;
+  const issuesBadge = nIssues > 0
+    ? `<span class="ord-status st-pen" title="Hubo incidencias al confirmar — ver detalle">⚠️ ${nIssues}</span>`
+    : '';
+
   return `
   <div class="ord-card ord-card-${order.status}">
     <div class="ord-card-head">
@@ -10134,7 +10264,7 @@ function renderOrderCard(order) {
         <span class="ord-vendor-name">${escHtml(order.vendor)}</span>
         <span class="ord-list-tag">${listName}</span>
       </div>
-      <span class="ord-status ${statusInfo.cls}">${statusInfo.txt}</span>
+      ${issuesBadge}<span class="ord-status ${statusInfo.cls}">${statusInfo.txt}</span>
     </div>
     <div class="ord-client">
       <strong>${escHtml(order.client) || '(sin cliente)'}</strong>
@@ -10148,7 +10278,7 @@ function renderOrderCard(order) {
     <div class="ord-items">${previewItems}${rest}</div>
     ${docsHtml}
     <div class="ord-actions">
-      <button class="ord-btn ord-btn-view" onclick="openOrderDetail('${order.localId}')">Ver detalle</button>
+      <button class="ord-btn ord-btn-view" onclick="openOrderDetail('${escJsAttr(order.localId)}')">Ver detalle</button>
       ${buttonsHtml}
     </div>
   </div>`;
@@ -12014,12 +12144,12 @@ async function srBoot() {
   srStartRealtime();
 
   clearInterval(_srSweepT);
-  _srSweepT = setInterval(() => { if (srEnabled()) srFlush(); }, SR_SWEEP_MS);
+  _srSweepT = setInterval(() => { if (srEnabled()) srFlush().catch(() => {}); }, SR_SWEEP_MS);
 
-  window.addEventListener('online', () => { if (srEnabled()) { srStartRealtime(); srPullAll(); srFlush(); } });
+  window.addEventListener('online', () => { if (srEnabled()) { srStartRealtime(); srPullAll().catch(() => {}); srFlush().catch(() => {}); } });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && srEnabled()) { srStartRealtime(); srPullAll(); }
-    if (document.visibilityState === 'hidden' && srEnabled()) srFlush();
+    if (document.visibilityState === 'visible' && srEnabled()) { srStartRealtime(); srPullAll().catch(() => {}); }
+    if (document.visibilityState === 'hidden' && srEnabled()) srFlush().catch(() => {});
   });
 
   _srSetStatus('Sync por filas ACTIVA ✓ (cada producto/rubro/pedido se sincroniza por separado).', 'ok');
