@@ -8305,13 +8305,18 @@ function applyBackupData(backup, opts = {}) {
       // un símbolo global accesible; replicamos la lógica para no
       // depender de ello.
       if (backup.mergedStock?.merged?.length) {
+        // Validación por producto: un backup corrupto/editado a mano con
+        // filas sin _key/product o qty no numérica rompía el render después
+        // de restaurar. Las filas inválidas se descartan con aviso.
+        let _descartados = 0;
         const productos = backup.mergedStock.merged.map(r => {
+          if (!r || typeof r !== 'object' || !r._key || !r.product) { _descartados++; return null; }
           if (r.qty == null && (r.qtyA != null || r.qtyB != null)) {
             // Migrar in-place
-            const qty = (r.qtyA || 0) + (r.qtyB || 0);
+            const qty = Math.max(0, (parseFloat(r.qtyA) || 0) + (parseFloat(r.qtyB) || 0));
             const migrated = {
-              _key:    r._key,
-              product: r.product,
+              _key:    String(r._key),
+              product: String(r.product),
               qty,
               total:   qty,
               extraA:  r.extraA  || '',
@@ -8319,13 +8324,23 @@ function applyBackupData(backup, opts = {}) {
             };
             return migrated;
           }
-          // Modelo nuevo — asegurar total
+          // Modelo nuevo — asegurar total y qty numérica
+          const qty = Math.max(0, parseFloat(r.qty) || 0);
           return {
             ...r,
-            qty: r.qty || 0,
-            total: r.qty || 0,
+            qty,
+            total: qty,
           };
-        });
+        }).filter(Boolean);
+
+        if (_descartados > 0) {
+          toast(`⚠️ ${_descartados} fila(s) inválidas del backup fueron descartadas (sin clave o sin nombre).`, 'err');
+        }
+        if (!productos.length) {
+          // No retornamos false: a esta altura precios/pedidos ya se
+          // aplicaron. Solo se saltea el reemplazo del stock.
+          toast('El stock del backup no pasó la validación — se conservó el stock actual.', 'err');
+        } else {
 
         state.merged  = productos;
         state.colAx   = backup.mergedStock.colAx  || '';
@@ -8353,6 +8368,7 @@ function applyBackupData(backup, opts = {}) {
           console.warn('Error al renderizar stock restaurado:', renderErr);
           // El stock quedó guardado igual — solo falló el render
         }
+        } // cierre del else (stock del backup válido)
       }
 
       // Invalidar índices en memoria
@@ -8437,7 +8453,19 @@ function buildVendorPayload() {
   const pricesVip  = {};
   let sinPrecioAct = 0, sinPrecioDist = 0, sinPrecioVip = 0;
 
+  // Detector de colisiones: normalize() puede colapsar nombres distintos a la
+  // misma _key ("Jabón-Florín" ≡ "Jabón Florín"). En los mapas de precios el
+  // último pisa al anterior SIN aviso — el vendedor vería un solo producto.
+  const _seenKeys = new Map(); // _key → product
+  const _colisiones = [];
+
   state.merged.forEach(it => {
+    const prevProduct = _seenKeys.get(it._key);
+    if (prevProduct !== undefined && prevProduct !== it.product) {
+      _colisiones.push(`"${prevProduct}" ≡ "${it.product}"`);
+    }
+    _seenKeys.set(it._key, it.product);
+
     const p = calcularPrecios(it._key);
     const meta = {
       label: it.product,
@@ -8471,6 +8499,11 @@ function buildVendorPayload() {
     marca:   r.extraA  || '',
     rubro:   r.extraA2 || '',
   }));
+
+  if (_colisiones.length) {
+    console.warn('buildVendorPayload: productos distintos con la misma _key normalizada:', _colisiones);
+    toast(`⚠️ ${_colisiones.length} par(es) de productos distintos comparten la misma clave normalizada y uno pisa al otro en el catálogo (ej: ${_colisiones[0]}). Renombralos para diferenciarlos.`, 'err');
+  }
 
   const payload = {
     _app:        'StockMerger',
@@ -10214,6 +10247,15 @@ function renderOrderCard(order) {
   }).join('');
   const rest = order.items.length > 3 ? `<div class="ord-item-preview ord-rest">…y ${order.items.length - 3} más</div>` : '';
 
+  // Badge de incidencias en la tarjeta: sin esto, los faltantes/parciales
+  // solo se veían entrando al detalle y pasaban desapercibidos.
+  const nIssues = order.confirmIssues
+    ? ((order.confirmIssues.ignorados || []).length + (order.confirmIssues.parciales || []).length)
+    : 0;
+  const issuesBadge = nIssues > 0
+    ? `<span class="ord-status st-pen" title="Hubo incidencias al confirmar — ver detalle">⚠️ ${nIssues}</span>`
+    : '';
+
   return `
   <div class="ord-card ord-card-${order.status}">
     <div class="ord-card-head">
@@ -10222,7 +10264,7 @@ function renderOrderCard(order) {
         <span class="ord-vendor-name">${escHtml(order.vendor)}</span>
         <span class="ord-list-tag">${listName}</span>
       </div>
-      <span class="ord-status ${statusInfo.cls}">${statusInfo.txt}</span>
+      ${issuesBadge}<span class="ord-status ${statusInfo.cls}">${statusInfo.txt}</span>
     </div>
     <div class="ord-client">
       <strong>${escHtml(order.client) || '(sin cliente)'}</strong>

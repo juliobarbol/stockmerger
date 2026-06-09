@@ -213,7 +213,9 @@ primero lo que puede causar pérdida de plata o de datos.
 | A6 sin schema.sql | `schema.sql` creado en ambos repos: DDL completo, constraints de idempotencia, policies actuales y plan de endurecimiento RLS. |
 | A7 header de Excel | `detectHeaderRow` devuelve `confident`; si ninguna fila matcheó keywords se avisa al usuario. |
 | A8 catálogo mudo | El modo auto ahora reporta en `scStatus` y consola cuando no hay catálogo para el `ns` (síntoma típico de ns mal tipeado). |
-| M1 (parcial) | `_normalizePricesList` usa `Object.create(null)` y descarta `__proto__`/`constructor`/`prototype` (vendedor). |
+| M1 | Vendedor: `_normalizePricesList` usa `Object.create(null)` y descarta `__proto__`/`constructor`/`prototype`. Merger: el restore de backup valida cada fila de stock (`_key`/`product` presentes, `qty` numérica ≥ 0) y descarta inválidas con aviso, sin dejar restauración parcial. |
+| M5 colisiones `_key` | `buildVendorPayload` detecta productos distintos que colapsan a la misma clave normalizada y avisa con ejemplos (antes uno pisaba al otro en silencio). |
+| M6 confirmIssues | El detalle YA los mostraba (falso positivo parcial); se agregó el badge `⚠️ N` en la tarjeta del listado para que no pasen desapercibidos. |
 | M3 cola sin reintento | Reintento periódico de `flushOrderQueue` cada 60 s con la app visible (vendedor). |
 | M4 `normalizeKey()` | Eliminada. **Al investigarla apareció un bug real**: `importChinaList` indexaba `chinaPrices` con keys en MAYÚSCULAS, invisibles para todos los lookups (que usan `normalize()` en minúsculas). Fix + migración idempotente de keys viejas al cargar. |
 | M8 pulls concurrentes | Flag `_pullOrdersBusy` en `pullOrders` (merger). |
@@ -241,7 +243,5 @@ primero lo que puede causar pérdida de plata o de datos.
 3. **A4 precio obsoleto en pedido en curso** — mitigado de fábrica (el modo
    auto no pisa un pedido en curso); el snapshot `_priceSyncedAt` +
    revalidación queda como mejora de producto.
-4. **M1 resto** — validación profunda de backups del merger (shape por
-   producto al importar JSON).
-5. **M2 cuota proactiva**, **M6 UI de confirmIssues**, **M7 errores
-   diferenciados**, **LWW tiebreaker** — fases 3–5 del plan.
+4. **M2 cuota proactiva**, **M7 errores diferenciados**, **LWW tiebreaker
+   en SYNC_ROWS** — fases 3–5 del plan.
