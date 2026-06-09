@@ -1,5 +1,9 @@
 # Auditoría de punta a punta — StockMerger + StockVendedor
 
+> **Estado (2026-06-09)**: primera tanda de remediación implementada en la
+> rama `claude/app-audit-improvements-rghqv4` de ambos repos. Ver §5 al final:
+> qué quedó resuelto, qué falló como falso positivo y qué sigue pendiente.
+
 > Fecha: 2026-06-09. Alcance: ambos repos (`stockmerger`, `stockvendedor`),
 > contrato compartido (`vendor_data_v2`, `orders`, `_key`), Supabase,
 > service workers, build y deploy. Los números de línea son de la fecha de
@@ -192,3 +196,52 @@ primero lo que puede causar pérdida de plata o de datos.
 4. **Vendorear las libs CDN** al repo (xlsx, supabase-js, jspdf) — elimina
    la dependencia de CDNs para el offline-first real y el riesgo de supply
    chain; el SW ya las cachearía como assets propios.
+
+---
+
+## 5. Estado de implementación (2026-06-09)
+
+### ✅ Resuelto en esta rama (ambos repos donde aplica)
+
+| Hallazgo | Fix |
+|---|---|
+| C2 XSS en `onclick` | Nuevo `escJsAttr()` (escape JS + HTML en capas) en ambas apps. Reemplazó el escape de solo-comilla **y también** los `escAttr`/`escHtml` usados en contexto JS en PRICES.JS del merger, cuyo `&#39;` se decodificaba de vuelta a `'` antes de ejecutar (XSS adicional no detectado por la primera pasada). |
+| C3 doble confirmación | Guard cross-tab vía localStorage en `confirmReceivedOrder` (se libera al revertir). |
+| A1 promesas flotantes | `.catch()` en `publishCatalog`/`pullOrders`/`srFlush`/`srPullAll` fire-and-forget (merger). |
+| A2 doble envío | `handleSendOrder` es async y AWAITea `pushOrderSafe`; el mutex queda tomado hasta el final (vendedor). |
+| A3 cursor de pedidos | `gte` en lugar de `gt`; la fila borde re-fetcheada la descarta el dedupe por `order_id`. |
+| A6 sin schema.sql | `schema.sql` creado en ambos repos: DDL completo, constraints de idempotencia, policies actuales y plan de endurecimiento RLS. |
+| A7 header de Excel | `detectHeaderRow` devuelve `confident`; si ninguna fila matcheó keywords se avisa al usuario. |
+| A8 catálogo mudo | El modo auto ahora reporta en `scStatus` y consola cuando no hay catálogo para el `ns` (síntoma típico de ns mal tipeado). |
+| M1 (parcial) | `_normalizePricesList` usa `Object.create(null)` y descarta `__proto__`/`constructor`/`prototype` (vendedor). |
+| M3 cola sin reintento | Reintento periódico de `flushOrderQueue` cada 60 s con la app visible (vendedor). |
+| M4 `normalizeKey()` | Eliminada. **Al investigarla apareció un bug real**: `importChinaList` indexaba `chinaPrices` con keys en MAYÚSCULAS, invisibles para todos los lookups (que usan `normalize()` en minúsculas). Fix + migración idempotente de keys viejas al cargar. |
+| M8 pulls concurrentes | Flag `_pullOrdersBusy` en `pullOrders` (merger). |
+| M9 historial corrupto | `loadOrders` preserva el crudo en `vendor_orders_corrupt` y loguea (vendedor). |
+| Bajo: `READE.md` | Renombrado a `README.md` (ahora sí lo excluye `.assetsignore`). |
+
+### ❌ Falsos positivos (verificados y descartados)
+
+- **C4 merger**: el merger YA tenía flush en `pagehide` + `visibilitychange`
+  (STORE.JS). En el vendedor todos los saves son localStorage sincrónico —
+  no hay ventana de write-behind.
+- **Bajo multiplicadores 0/negativos**: `saveRubroEdit`, `saveProductOverride`
+  y `confirmSetChinaPrice` ya validan `> 0` en todos los puntos de entrada.
+
+### ⏳ Pendiente (requiere acción manual o decisión de producto)
+
+1. **C1 RLS real por `ns`** — el más importante. Requiere Supabase Auth y
+   cambios en el dashboard. El plan está al final de `schema.sql`. Hasta
+   entonces, las policies siguen abiertas (riesgo conocido y aceptado como
+   arranque).
+2. **A5 pineo de CDN + SRI** — este entorno no tiene salida de red a jsdelivr
+   para resolver la versión exacta ni computar los hashes; pinear a ciegas
+   rompería la app. Hay un TODO con instrucciones junto a los `<script>` de
+   ambos `index.html`. Alternativa superior: vendorear las libs al repo.
+3. **A4 precio obsoleto en pedido en curso** — mitigado de fábrica (el modo
+   auto no pisa un pedido en curso); el snapshot `_priceSyncedAt` +
+   revalidación queda como mejora de producto.
+4. **M1 resto** — validación profunda de backups del merger (shape por
+   producto al importar JSON).
+5. **M2 cuota proactiva**, **M6 UI de confirmIssues**, **M7 errores
+   diferenciados**, **LWW tiebreaker** — fases 3–5 del plan.
