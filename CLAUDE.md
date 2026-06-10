@@ -30,7 +30,7 @@ Vive en su propio repo (`juliobarbol/stockvendedor`).
 
 ## ⚠️ Trabajar sin quemar tokens — LEER PRIMERO
 
-`index.html` pesa **~485 KB / ~12.100 líneas** (≈120k tokens). **Leerlo entero
+`index.html` pesa **~513 KB / ~12.700 líneas** (≈125k tokens). **Leerlo entero
 gasta un contexto completo de una.** Pero está limpio y modularizado: líneas
 cortas, sin minificados ni base64, banners `// XXX.JS`. Por eso la **lectura
 por rangos de línea es exacta y barata**. Reglas:
@@ -44,7 +44,7 @@ por rangos de línea es exacta y barata**. Reglas:
 4. Para **editar**: `Grep` el `old_string` único → `Read` solo esa franja →
    `Edit`. No vuelvas a leer el archivo después de editar (el harness ya valida
    el cambio).
-5. **CSS (`<style>` 22–2267)** y **HTML/markup (2268–3190)** casi nunca hacen
+5. **CSS (`<style>` 22–2287)** y **HTML/markup (2288–3279)** casi nunca hacen
    falta para lógica de negocio — no los leas salvo trabajo de estilos o
    maquetado.
 6. Contrato compartido con StockVendedor: `Grep` el símbolo en **ambos** repos
@@ -55,10 +55,10 @@ por rangos de línea es exacta y barata**. Reglas:
 | Región | Líneas |
 |---|---|
 | `<head>` + scripts CDN | 1–21 |
-| **CSS** (`<style>`) | 22–2267 |
-| **HTML / markup** (body, pestañas) | 2268–3190 |
-| Script de arranque temprano | 3191–3201 |
-| **JS principal** (`<script>`) | 3202–12124 |
+| **CSS** (`<style>`) | 22–2287 |
+| **HTML / markup** (body, pestañas) | 2288–3279 |
+| Script de arranque temprano | 3280–3290 |
+| **JS principal** (`<script>`) | 3291–12709 |
 
 ### Módulos internos (dentro del JS principal)
 
@@ -66,25 +66,26 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 
 | Módulo | Líneas | Rol |
 |---|---|---|
-| `STORE.JS` | 3204–3369 | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
-| `STATE.JS` | 3370–3940 | Estado global (`state`) + persistencia en localStorage. |
-| `UTILS.JS` | 3941–4047 | Utilidades compartidas (normalización de claves `_key`, hashing, etc.). |
-| `FILES.JS` | 4048–4413 | Carga de Excel de stock + mapper de columnas. |
-| `MERGE.JS` | 4414–5332 | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
-| `UI.JS` | 5333–6065 | Render de stock, navegación, filtros, cards mobile con virtual scroll. |
-| `EXPORT.JS` | 6066–6204 | Exportar Excel / CSV / reportes de alertas. |
-| `PRICES.JS` | 6205–7949 | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
-| `BACKUP.JS` | 7950–8482 | Exportar/importar TODA la config como JSON. Incluye `buildVendorPayload()`. |
-| `BACKUPS.JS` | 8483–8685 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
-| `SUPABASE.JS` | 8686–9160 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos. |
-| `REALTIME.JS` | 9161–9262 | Supabase Realtime: escucha `orders` nuevos. |
-| `ORDERS.JS` | 9263–9910 | Pedidos recibidos de vendedores (`state.receivedOrders`). |
-| `ORDERS_UI.JS` | 9911–10248 | UI de la pestaña Pedidos. |
-| `DOCS.JS` | 10249–10742 | Generación de PDF (presupuesto / remito / nota de pedido). |
-| `ANALYTICS.JS` | 10743–11070 | Agregaciones de ventas (solo cálculo, sin DOM). |
-| `ANALYTICS_UI.JS` | 11071–11570 | UI de la pestaña Análisis. |
-| `SYNC_ROWS.JS` | 11571–12064 | Sync **fila por fila** entre dispositivos de la central (beta). |
-| `BOOT.JS` | 12065–12123 | Orquesta el arranque sobre IndexedDB. |
+| `STORE.JS` | 3291–3456 | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
+| `STATE.JS` | 3457–4071 | Estado global (`state`) + persistencia en localStorage. Incluye `state.clients` (libreta de la central). |
+| `UTILS.JS` | 4072–4198 | Utilidades compartidas (normalización de claves `_key`, hashing, etc.). |
+| `FILES.JS` | 4199–4572 | Carga de Excel de stock + mapper de columnas. |
+| `MERGE.JS` | 4573–5491 | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
+| `UI.JS` | 5492–6262 | Render de stock, navegación, filtros, selector de orden, cards mobile con virtual scroll. |
+| `EXPORT.JS` | 6263–6413 | Exportar Excel / CSV / reportes de alertas (con autofiltro y precios de las 3 listas + China). |
+| `PRICES.JS` | 6414–8156 | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
+| `BACKUP.JS` | 8157–8727 | Exportar/importar TODA la config como JSON (incluye `clients`). Incluye `buildVendorPayload()`. |
+| `BACKUPS.JS` | 8728–8942 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
+| `SUPABASE.JS` | 8943–9437 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos (+ fichas de clientes). |
+| `REALTIME.JS` | 9438–9551 | Supabase Realtime: escucha `orders` nuevos y cambios en `clients`. |
+| `ORDERS.JS` | 9552–10215 | Pedidos recibidos de vendedores (`state.receivedOrders`). |
+| `ORDERS_UI.JS` | 10216–10577 | UI de la pestaña Pedidos (las tarjetas muestran notas/lista de la ficha del cliente). |
+| `CLIENTS.JS` | 10578–10830 | Fichas de clientes de la central (overlay 👥 Clientes) + `pullVendorClients()` (bajada desde la nube). |
+| `DOCS.JS` | 10831–11324 | Generación de PDF (presupuesto / remito / nota de pedido). |
+| `ANALYTICS.JS` | 11325–11652 | Agregaciones de ventas (solo cálculo, sin DOM). |
+| `ANALYTICS_UI.JS` | 11653–12152 | UI de la pestaña Análisis. |
+| `SYNC_ROWS.JS` | 12153–12646 | Sync **fila por fila** entre dispositivos de la central (beta). |
+| `BOOT.JS` | 12647–12708 | Orquesta el arranque sobre IndexedDB. |
 
 > Los rangos se mueven al editar. Si algo no cuadra, reubicá con
 > `Grep -n "^// NOMBRE.JS"` y leé el banner.
@@ -171,6 +172,29 @@ Dos canales equivalentes, según haya nube o no:
   contra `state.merged` y lo guarda en `state.receivedOrders`.
 - **`_key`**: clave normalizada de producto. Es el pegamento para cruzar
   catálogo y pedidos. Debe normalizarse igual en ambas apps (`UTILS.JS`).
+
+## Decisiones de producto (de Julio) — fuente de verdad
+
+> ⚠️ **Mantener al día**: si Julio cambia alguna de estas reglas, hay que
+> EDITAR esta sección en los CLAUDE.md de **ambos repos** en el mismo cambio.
+> Una regla desactualizada acá genera implementaciones contradictorias.
+
+- **Listas de precios**: claves internas `act` / `dist` / `vip` — los nombres
+  visibles son "Lista 7", "Distribuidor" y "VIP". Las claves internas NO se
+  renombran (romperían pedidos guardados y la conexión entre apps).
+- **Fichas de clientes**: cada vendedor tiene SU libreta local (StockVendedor,
+  pestaña Clientes); la central tiene la suya con TODOS los clientes
+  (StockMerger, overlay 👥 Clientes en la pestaña Pedidos).
+- **La lista del pedido la define la ficha del cliente**: al elegir cliente en
+  el pedido, su lista se aplica y los chips quedan bloqueados. Para un pedido
+  puntual con otra lista se EDITA LA FICHA (no se puede pisar desde el pedido).
+- **Notas privadas por lado**: las notas del vendedor no viajan a la central y
+  viceversa. Entre apps solo viajan nombre / lista / vendedor (tabla `clients`).
+- **Sync de fichas vendedor → central** (tabla `clients`): los borrados NO
+  viajan (la libreta de la central es de la central), y si la central editó
+  una ficha (`source: 'central'`), lo que mande un vendedor no la pisa.
+- **Excel exportados**: siempre con autofiltro en la fila de cabecera. El
+  Excel de Stock de la central incluye las 3 listas + precio China.
 
 ## Notas de desarrollo
 
