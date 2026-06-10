@@ -6210,9 +6210,15 @@ function buildExportData() {
     const st = stockStatus(r); // usa MIN_STOCK_GLOBAL como fallback
     const minIndividual = state.minStock[r._key];
     const minEfectivo = minIndividual ?? MIN_STOCK_GLOBAL;
+    // Precios de las 3 listas + costo China (celda vacía si no hay precio)
+    const p = calcularPrecios(r._key);
     return {
       'Producto':        r.product,
       'Stock':           r.qty,
+      'Precio China':    p.china ?? '',
+      'Distribuidor':    p.dist  ?? '',
+      'Lista 7':         p.l7    ?? '',
+      'VIP':             p.vip   ?? '',
       'Estado':          st === 'nostock'  ? '❌ SIN STOCK'
                        : st === 'lowstock' ? '⚠️ BAJO'
                        : '✓ OK',
@@ -6253,7 +6259,9 @@ function exportExcel() {
   // Hoja 1: Stock completo
   const wsAll = XLSX.utils.json_to_sheet(buildExportData());
   wsAll['!cols'] = [
-    { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 }, { wch: 18 },
+    { wch: 42 }, { wch: 13 },                           // Producto, Stock
+    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, // China, Dist, L7, VIP
+    { wch: 14 }, { wch: 13 }, { wch: 18 },              // Estado, mínimos
   ];
   // Autofiltro: quien abra el Excel puede filtrar/ordenar por cualquier columna
   wsAll['!autofilter'] = { ref: wsAll['!ref'] };
