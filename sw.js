@@ -12,7 +12,7 @@
 // usuarios reciben la última versión sin bump manual.
 // ════════════════════════════════════════════════════════════════════
 
-const CACHE = 'stockmerger-20260610-123825';
+const CACHE = 'stockmerger-20260610-125520';
 
 // Recursos propios (mismo origen) — se precachean al instalar.
 const PRECACHE = [
