@@ -120,6 +120,7 @@ Cliente creado con `supabase.createClient(url, anonKey)` (ver `scClient()`).
 | `received_orders` | Espejo en nube de los pedidos ya importados, para sync entre dispositivos de la central. |
 | `catalog_items`, `rubro_multipliers`, `settings` | Sync fila-por-fila entre dispositivos de la central (`SYNC_ROWS.JS`). |
 | `backups` | Snapshots de respaldo en nube (`BACKUPS.JS`). |
+| `clients` | **Lee** (pull + Realtime). Fichas de clientes que crean los vendedores; se integran a la libreta local (`CLIENTS.JS`, `pullVendorClients`). |
 
 Realtime: se suscribe a `postgres_changes` en `orders` (pedidos nuevos) y, en
 modo multi-dispositivo, a `catalog_items` / `rubro_multipliers` / `settings` /
