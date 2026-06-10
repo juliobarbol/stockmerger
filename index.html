@@ -11,14 +11,14 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>StockMerger</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<!-- TODO(auditoría A5): pinear supabase-js a versión exacta (@2.x.y) y agregar
-     integrity+crossorigin a los 4 scripts CDN. Hacerlo con red: resolver la
-     versión en https://www.jsdelivr.com/package/npm/@supabase/supabase-js y
-     generar SRI en https://www.srihash.org/ — y probar antes de publicar. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Al cambiar la versión de un script hay que regenerar su hash SRI
+     (https://www.srihash.org/). Supabase: usar el archivo estático
+     dist/umd/supabase.js — jsdelivr genera los .min.js al vuelo y no
+     sirven para SRI. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" integrity="sha384-fCAW/rDWORTbQXSiB7mOg0QtQ5c+r0f544y6XoKjuVva0nMBlCpNUjiFeG5iMdS3" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.108.1/dist/umd/supabase.js" integrity="sha384-EjUdIVmzWliPzdzhxZ9ZoO0etXLKWuUPUftAGxP6qH6Lm4oLwoLaJR0Ba4pIDiDL" crossorigin="anonymous"></script>
 
 
 
@@ -145,6 +145,9 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 /* FILTER CHIPS */
 .chips-wrap{display:flex;gap:.45rem;padding:.6rem 1rem;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;border-bottom:1px solid var(--border)}
 .chips-wrap::-webkit-scrollbar{display:none}
+.sort-row{display:flex;align-items:center;gap:.5rem;padding:.45rem 1rem;border-bottom:1px solid var(--border)}
+.sort-row .sort-label{font-size:.68rem;color:var(--muted);white-space:nowrap}
+.sort-row select{flex:1;max-width:280px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.35rem .5rem;font-size:.72rem;font-family:inherit}
 .chip{flex-shrink:0;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-family:'DM Mono',monospace;font-size:.7rem;padding:0 .75rem;border-radius:99px;cursor:pointer;transition:all .15s;white-space:nowrap;min-height:36px;display:flex;align-items:center;-webkit-tap-highlight-color:transparent}
 .chip.active{background:var(--accent);border-color:var(--accent);color:#0d0f14;font-weight:700}
 .chip.warn-chip.active{background:var(--warn);border-color:var(--warn);color:#0d0f14}
@@ -2179,7 +2182,7 @@ tr.row-lowstock td{background:#f59e0b08}
   transition:width .35s ease;
 }
 
-/* ── Grid de listas (Actualizada / Distribuidor / VIP) ── */
+/* ── Grid de listas (Lista 7 / Distribuidor / VIP) ── */
 .an-lists-grid{
   display:grid;
   grid-template-columns:repeat(3, 1fr);
@@ -2477,6 +2480,15 @@ tr.row-lowstock td{background:#f59e0b08}
       <div class="chip active" data-filter="all" onclick="setFilter('all',this)">Todos</div>
       <div class="chip warn-chip" data-filter="lowstock" onclick="setFilter('lowstock',this)">⚠️ Bajo</div>
       <div class="chip red-chip" data-filter="nostock" onclick="setFilter('nostock',this)">❌ Sin stock</div>
+    </div>
+    <div class="sort-row">
+      <span class="sort-label">Ordenar:</span>
+      <select id="sortSelect" onchange="setSortFromSelect(this.value)">
+        <option value="">Más stock primero</option>
+        <option value="qty:1">Menos stock primero</option>
+        <option value="product:1">Producto A→Z</option>
+        <option value="product:-1">Producto Z→A</option>
+      </select>
     </div>
     <div class="stats-strip">
       <div class="stat-cell"><div class="num" id="sTotal">—</div><p>productos</p></div>
@@ -5512,6 +5524,7 @@ function applyFilter() {
     });
   }
   state.filtered = data;
+  _syncSortSelect();
   document.getElementById('resultCount').textContent =
     data.length + ' resultado' + (data.length !== 1 ? 's' : '');
   // Renderizar solo lo que el viewport muestra
@@ -5536,6 +5549,44 @@ function sortBy(col) {
   if (state.sortCol === col) state.sortDir *= -1;
   else { state.sortCol = col; state.sortDir = 1; }
   applyFilter();
+}
+
+// ══ ORDENAR (select visible en mobile y desktop) ══
+// El select del HTML trae las opciones fijas (stock/producto). Acá se
+// agregan las dinámicas (marca/rubro si esas columnas existen) y se
+// mantiene sincronizado con state.sortCol/sortDir (que también cambian
+// al tocar los encabezados de la tabla en desktop).
+function setSortFromSelect(val) {
+  if (!val) { state.sortCol = null; state.sortDir = 1; }
+  else {
+    const [col, dir] = val.split(':');
+    state.sortCol = col;
+    state.sortDir = parseInt(dir, 10) || 1;
+  }
+  applyFilter();
+}
+
+let _sortOptsKey = null;
+function _syncSortSelect() {
+  const sel = document.getElementById('sortSelect');
+  if (!sel) return;
+  const key = (state.colAx || '') + '|' + (state.colAx2 || '');
+  if (_sortOptsKey !== key) {
+    _sortOptsKey = key;
+    let opts =
+      '<option value="">Más stock primero</option>' +
+      '<option value="qty:1">Menos stock primero</option>' +
+      '<option value="product:1">Producto A→Z</option>' +
+      '<option value="product:-1">Producto Z→A</option>';
+    if (state.colAx)  opts += `<option value="extraA:1">${escapeHtml(state.colAx)} A→Z</option>`;
+    if (state.colAx2) opts += `<option value="extraA2:1">${escapeHtml(state.colAx2)} A→Z</option>`;
+    sel.innerHTML = opts;
+  }
+  const want = state.sortCol ? state.sortCol + ':' + state.sortDir : '';
+  sel.value = want;
+  // Combinación sin opción propia (ej. orden invertido desde un encabezado):
+  // caemos al default para no dejar el select en blanco.
+  if (sel.value !== want) sel.value = '';
 }
 
 // ══ CARDS (mobile) — virtual scroll por lotes ══
@@ -6204,6 +6255,8 @@ function exportExcel() {
   wsAll['!cols'] = [
     { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 }, { wch: 18 },
   ];
+  // Autofiltro: quien abra el Excel puede filtrar/ordenar por cualquier columna
+  wsAll['!autofilter'] = { ref: wsAll['!ref'] };
   XLSX.utils.book_append_sheet(wb, wsAll, 'Stock');
 
   // Hoja 2: Solo alertas (si hay)
@@ -6213,6 +6266,7 @@ function exportExcel() {
     wsAlert['!cols'] = [
       { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
     ];
+    wsAlert['!autofilter'] = { ref: wsAlert['!ref'] };
     XLSX.utils.book_append_sheet(wb, wsAlert, '⚠️ Alertas');
   }
 
@@ -6235,6 +6289,7 @@ function exportAlerts() {
   ws['!cols'] = [
     { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
   ];
+  ws['!autofilter'] = { ref: ws['!ref'] };
   XLSX.utils.book_append_sheet(wb, ws, '⚠️ Alertas');
   XLSX.writeFile(wb, 'alertas_stock.xlsx');
   const sinStock  = alertData.filter(r => r['Estado'].includes('SIN')).length;
@@ -7412,6 +7467,8 @@ function generateSingleList(lista, silent) {
   });
 
   const ws = XLSX.utils.json_to_sheet(filas);
+  // Autofiltro: quien abra el Excel puede filtrar/ordenar por cualquier columna
+  ws['!autofilter'] = { ref: ws['!ref'] };
   const wb = XLSX.utils.book_new();
   const sheetName = lista === 'dist' ? 'Distribuidor' : lista === 'l7' ? 'Lista 7' : 'VIP';
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -9617,7 +9674,7 @@ function ingestVendorOrder(src, opts = {}) {
   const superaStock = items.filter(i => i.matched && i.qty > i.stockAtImport).length;
 
   if (askConfirm) {
-    const listName = order.list === 'act' ? 'Actualizada'
+    const listName = order.list === 'act' ? 'Lista 7'
                    : order.list === 'dist' ? 'Distribuidor' : 'VIP';
     let msg = `Pedido del vendedor: ${order.vendor}\n`;
     msg += `Cliente: ${order.client || '(sin nombre)'}\n`;
@@ -10180,7 +10237,7 @@ function _stockActualPorKey(key) {
 
 function renderOrderCard(order) {
   const fechaImp = new Date(order.importedAt).toLocaleDateString('es-AR');
-  const listName = order.list === 'act' ? 'Actualizada'
+  const listName = order.list === 'act' ? 'Lista 7'
                  : order.list === 'dist' ? 'Distribuidor' : 'VIP';
   const listEmoji = order.list === 'act' ? '📋'
                   : order.list === 'dist' ? '🚛' : '⭐';
@@ -10300,7 +10357,7 @@ function openOrderDetail(localId) {
   const overlay = document.getElementById('overlayOrderDetail');
   const body = document.getElementById('orderDetailBody');
 
-  const listName = order.list === 'act' ? 'Actualizada'
+  const listName = order.list === 'act' ? 'Lista 7'
                  : order.list === 'dist' ? 'Distribuidor' : 'VIP';
 
   // Tabla completa de items — el badge muestra el stock actual
