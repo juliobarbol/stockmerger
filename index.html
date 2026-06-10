@@ -2179,7 +2179,7 @@ tr.row-lowstock td{background:#f59e0b08}
   transition:width .35s ease;
 }
 
-/* ── Grid de listas (Actualizada / Distribuidor / VIP) ── */
+/* ── Grid de listas (Lista 7 / Distribuidor / VIP) ── */
 .an-lists-grid{
   display:grid;
   grid-template-columns:repeat(3, 1fr);
@@ -9617,7 +9617,7 @@ function ingestVendorOrder(src, opts = {}) {
   const superaStock = items.filter(i => i.matched && i.qty > i.stockAtImport).length;
 
   if (askConfirm) {
-    const listName = order.list === 'act' ? 'Actualizada'
+    const listName = order.list === 'act' ? 'Lista 7'
                    : order.list === 'dist' ? 'Distribuidor' : 'VIP';
     let msg = `Pedido del vendedor: ${order.vendor}\n`;
     msg += `Cliente: ${order.client || '(sin nombre)'}\n`;
@@ -10180,7 +10180,7 @@ function _stockActualPorKey(key) {
 
 function renderOrderCard(order) {
   const fechaImp = new Date(order.importedAt).toLocaleDateString('es-AR');
-  const listName = order.list === 'act' ? 'Actualizada'
+  const listName = order.list === 'act' ? 'Lista 7'
                  : order.list === 'dist' ? 'Distribuidor' : 'VIP';
   const listEmoji = order.list === 'act' ? '📋'
                   : order.list === 'dist' ? '🚛' : '⭐';
@@ -10300,7 +10300,7 @@ function openOrderDetail(localId) {
   const overlay = document.getElementById('overlayOrderDetail');
   const body = document.getElementById('orderDetailBody');
 
-  const listName = order.list === 'act' ? 'Actualizada'
+  const listName = order.list === 'act' ? 'Lista 7'
                  : order.list === 'dist' ? 'Distribuidor' : 'VIP';
 
   // Tabla completa de items — el badge muestra el stock actual
