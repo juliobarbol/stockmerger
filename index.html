@@ -148,6 +148,19 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .sort-row{display:flex;align-items:center;gap:.5rem;padding:.45rem 1rem;border-bottom:1px solid var(--border)}
 .sort-row .sort-label{font-size:.68rem;color:var(--muted);white-space:nowrap}
 .sort-row select{flex:1;max-width:280px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.35rem .5rem;font-size:.72rem;font-family:inherit}
+/* ── Fichas de clientes (overlay 👥 Clientes) ── */
+.clients-toolbar{display:flex;gap:.5rem;margin-bottom:.6rem}
+.clients-toolbar input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.45rem .6rem;font-size:.75rem}
+.btn-clients-import{width:100%;background:var(--surface2);border:1px solid var(--accent2);color:var(--accent2);border-radius:8px;padding:.5rem;font-size:.72rem;cursor:pointer;margin-bottom:.6rem}
+.client-row{display:flex;align-items:center;gap:.6rem;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:.55rem .7rem;margin-bottom:.45rem;cursor:pointer}
+.client-row-main{flex:1;min-width:0}
+.client-row-name{font-weight:700;font-size:.8rem}
+.client-row-notes{font-size:.68rem;color:var(--muted);margin-top:.15rem;white-space:pre-line}
+.client-list-tag{flex-shrink:0;font-size:.6rem;font-weight:700;background:var(--accent);color:#0d0f14;border-radius:99px;padding:.15rem .5rem;white-space:nowrap}
+.clients-empty{font-size:.72rem;color:var(--muted);text-align:center;padding:1rem 0;line-height:1.5}
+.ord-ficha{font-size:.66rem;color:var(--muted);margin:.15rem 0 .3rem;white-space:pre-line}
+.ord-ficha-warn{color:var(--warn);font-weight:700}
+.ov-form textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.45rem .6rem;font-size:.75rem;font-family:inherit;resize:vertical}
 .chip{flex-shrink:0;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-family:'DM Mono',monospace;font-size:.7rem;padding:0 .75rem;border-radius:99px;cursor:pointer;transition:all .15s;white-space:nowrap;min-height:36px;display:flex;align-items:center;-webkit-tap-highlight-color:transparent}
 .chip.active{background:var(--accent);border-color:var(--accent);color:#0d0f14;font-weight:700}
 .chip.warn-chip.active{background:var(--warn);border-color:var(--warn);color:#0d0f14}
@@ -2816,6 +2829,9 @@ tr.row-lowstock td{background:#f59e0b08}
     <button class="btn-orders" onclick="openConfigModal()" title="Datos del emisor y numeración">
       ⚙️ Facturación
     </button>
+    <button class="btn-orders" onclick="openClientsModal()" title="Fichas de clientes: lista asignada y notas internas">
+      👥 Clientes
+    </button>
   </div>
 
   <!-- Búsqueda -->
@@ -3136,6 +3152,63 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="ov-foot">
       <button class="ov-btn" onclick="closeDocModal()">Cancelar</button>
       <button class="ov-btn primary" id="docGenerateBtn" onclick="confirmDocModal()">📄 Generar PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ OVERLAY: FICHAS DE CLIENTES (libreta de la central) ══ -->
+<div class="overlay-orders" id="overlayClients">
+  <div class="ov-box">
+    <div class="ov-head">
+      <h2>👥 Clientes</h2>
+      <button class="ov-close" onclick="closeClientsModal()">✕</button>
+    </div>
+    <div class="ov-body">
+      <div class="clients-toolbar">
+        <input type="text" id="clientsSearch" placeholder="🔍 Buscar cliente..."
+          oninput="renderClientsList()" autocomplete="off">
+        <button class="ov-btn primary" onclick="openClientForm(null)">➕ Nuevo</button>
+      </div>
+      <div id="clientsImportRow"></div>
+      <div id="clientsListBox"></div>
+    </div>
+    <div class="ov-foot">
+      <button class="ov-btn" onclick="closeClientsModal()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ OVERLAY: CREAR / EDITAR FICHA DE CLIENTE ══ -->
+<div class="overlay-orders" id="overlayClientForm">
+  <div class="ov-box">
+    <div class="ov-head">
+      <h2 id="clientFormTitle">Nuevo cliente</h2>
+      <button class="ov-close" onclick="closeClientForm()">✕</button>
+    </div>
+    <div class="ov-body">
+      <div class="ov-form">
+        <div>
+          <label>Nombre</label>
+          <input type="text" id="clientFormName" placeholder="Nombre del cliente" autocomplete="off">
+        </div>
+        <div>
+          <label>Lista de precios que le corresponde</label>
+          <select id="clientFormList">
+            <option value="act">Lista 7</option>
+            <option value="dist">Distribuidor</option>
+            <option value="vip">VIP</option>
+          </select>
+        </div>
+        <div>
+          <label>Notas internas (no las ven los vendedores)</label>
+          <textarea id="clientFormNotes" rows="4" placeholder="Info del cliente para no olvidar..."></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="ov-foot">
+      <button class="ov-btn" id="clientFormDeleteBtn" style="margin-right:auto;color:var(--red);border-color:var(--red)" onclick="deleteClientForm()">🗑 Borrar</button>
+      <button class="ov-btn" onclick="closeClientForm()">Cancelar</button>
+      <button class="ov-btn primary" onclick="saveClientForm()">Guardar</button>
     </div>
   </div>
 </div>
@@ -3474,6 +3547,10 @@ const state = {
   inferPending: [],
   // ── Pedidos recibidos de vendedores (StockVendedor) ──
   receivedOrders: [],
+
+  // Fichas de clientes de la central (libreta propia, con notas internas)
+  // Cada ficha: { id, name, list, notes, createdAt, updatedAt }
+  clients: [],
   // ── Config del generador de PDF y datos del emisor ──
   docConfig: null,
 };
@@ -3730,6 +3807,18 @@ function saveReceivedOrders() {
 }
 
 loadReceivedOrders();
+
+// ── Fichas de clientes (libreta de la central) ──
+function loadClients() {
+  try { state.clients = JSON.parse(Store.get('clients') || '[]'); }
+  catch (e) { state.clients = []; }
+  if (!Array.isArray(state.clients)) state.clients = [];
+}
+function saveClients() {
+  _safeSetItem('clients', JSON.stringify(state.clients), 'la libreta de clientes');
+}
+
+loadClients();
 
 // ── Config de documento (datos del emisor + numeración + tipo cambio) ──
 // Default: datos hardcodeados de OP Bayres + numeración arrancando en 1300.
@@ -8164,6 +8253,7 @@ function buildBackupPayload(settingsOnly = false) {
     dupMemory:          state.dupMemory,
     minStock:           state.minStock,
     docConfig:          state.docConfig,
+    clients:            state.clients,
     // Modelo v23: multiplicadores por rubro + factor distribuidor
     rubrosMultis:       state.rubrosMultis,
     distribuidorFactor: state.distribuidorFactor,
@@ -8336,6 +8426,10 @@ function applyBackupData(backup, opts = {}) {
       if (backup.dupMemory)     { state.dupMemory     = backup.dupMemory;     saveDupMemory(); }
       if (backup.minStock)      { state.minStock      = backup.minStock;      saveMinStock(); }
       if (backup.docConfig)     { state.docConfig     = backup.docConfig;     saveDocConfig(); }
+      if (backup.clients && Array.isArray(backup.clients)) {
+        state.clients = backup.clients;
+        saveClients();
+      }
       // Modelo v23
       if (backup.rubrosMultis && typeof backup.rubrosMultis === 'object') {
         state.rubrosMultis = backup.rubrosMultis;
@@ -10321,6 +10415,20 @@ function renderOrderCard(order) {
     ? `<span class="ord-status st-pen" title="Hubo incidencias al confirmar — ver detalle">⚠️ ${nIssues}</span>`
     : '';
 
+  // Ficha del cliente (si la central la cargó): notas internas + aviso
+  // si el pedido vino con una lista distinta a la asignada en la ficha.
+  let fichaHtml = '';
+  const ficha = (typeof findClientFicha === 'function') ? findClientFicha(order.client) : null;
+  if (ficha) {
+    const fNotes = String(ficha.notes || '').trim();
+    const mismatch = ficha.list !== order.list
+      ? `<span class="ord-ficha-warn">⚠️ la ficha dice ${_cliListName(ficha.list)}</span>`
+      : '';
+    if (fNotes || mismatch) {
+      fichaHtml = `<div class="ord-ficha">${fNotes ? `📌 ${escHtml(fNotes)}` : ''}${fNotes && mismatch ? ' · ' : ''}${mismatch}</div>`;
+    }
+  }
+
   return `
   <div class="ord-card ord-card-${order.status}">
     <div class="ord-card-head">
@@ -10335,6 +10443,7 @@ function renderOrderCard(order) {
       <strong>${escHtml(order.client) || '(sin cliente)'}</strong>
       <span class="ord-date">${fechaImp}</span>
     </div>
+    ${fichaHtml}
     <div class="ord-totals">
       <span><b>${order.items.length}</b> items</span>
       <span><b>USD ${_fmtN(order.total)}</b></span>
@@ -10451,6 +10560,181 @@ function closeOrderDetail() {
   document.getElementById('overlayOrderDetail').style.display = 'none';
 }
 
+
+// ════════════════════════════════════════════════════════════════════
+// CLIENTS.JS — Fichas de clientes de la central
+// ════════════════════════════════════════════════════════════════════
+//
+// La central lleva su PROPIA libreta (state.clients): nombre, lista de
+// precios que le corresponde a cada cliente y notas internas. No se
+// comparte con los vendedores (ellos tienen su libreta en StockVendedor).
+//
+// El cruce con los pedidos recibidos es POR NOMBRE de cliente
+// (normalizado a minúsculas). En cada tarjeta de pedido se muestran las
+// notas de la ficha y un aviso si el pedido vino con una lista distinta
+// a la asignada. Además se pueden crear fichas en lote desde los nombres
+// que aparecen en los pedidos recibidos.
+// ════════════════════════════════════════════════════════════════════
+
+function _cliKey(name) { return String(name || '').trim().toLowerCase(); }
+
+function findClientFicha(name) {
+  const k = _cliKey(name);
+  if (!k) return null;
+  return (state.clients || []).find(c => _cliKey(c.name) === k) || null;
+}
+
+function _cliListName(list) {
+  return list === 'dist' ? 'Distribuidor' : list === 'vip' ? 'VIP' : 'Lista 7';
+}
+
+function _newClientId() {
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function openClientsModal() {
+  const inp = document.getElementById('clientsSearch');
+  if (inp) inp.value = '';
+  renderClientsList();
+  document.getElementById('overlayClients').style.display = 'flex';
+}
+function closeClientsModal() {
+  document.getElementById('overlayClients').style.display = 'none';
+}
+
+// Clientes que aparecen en pedidos recibidos pero todavía no tienen ficha.
+// Para la lista inicial se usa la del pedido MÁS RECIENTE de cada uno.
+function _clientsMissingFromOrders() {
+  const known = new Set((state.clients || []).map(c => _cliKey(c.name)));
+  const missing = new Map();
+  [...(state.receivedOrders || [])]
+    .sort((a, b) => String(a.importedAt || '').localeCompare(String(b.importedAt || '')))
+    .forEach(o => {
+      const n = String(o.client || '').trim();
+      if (!n) return;
+      const k = _cliKey(n);
+      if (known.has(k)) return;
+      missing.set(k, { name: n, list: o.list || 'act' }); // el más nuevo pisa
+    });
+  return [...missing.values()];
+}
+
+function renderClientsList() {
+  const box = document.getElementById('clientsListBox');
+  if (!box) return;
+  const q = _cliKey(document.getElementById('clientsSearch')?.value);
+
+  const importRow = document.getElementById('clientsImportRow');
+  if (importRow) {
+    const missing = _clientsMissingFromOrders();
+    importRow.innerHTML = missing.length
+      ? `<button class="btn-clients-import" onclick="importClientsFromOrders()">📥 Crear ${missing.length} ficha${missing.length !== 1 ? 's' : ''} desde los pedidos recibidos</button>`
+      : '';
+  }
+
+  let list = [...(state.clients || [])].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+  if (q) list = list.filter(c => _cliKey(c.name).includes(q) || _cliKey(c.notes).includes(q));
+
+  if (!(state.clients || []).length) {
+    box.innerHTML = `<div class="clients-empty">Todavía no hay fichas.<br>Creá una con ➕ Nuevo, o traelas en lote desde los pedidos recibidos.</div>`;
+    return;
+  }
+  if (!list.length) {
+    box.innerHTML = `<div class="clients-empty">Sin resultados.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(c => {
+    const notes = String(c.notes || '').trim();
+    return `<div class="client-row" onclick="openClientForm('${escJsAttr(c.id)}')">
+      <div class="client-row-main">
+        <div class="client-row-name">${escHtml(c.name)}</div>
+        ${notes ? `<div class="client-row-notes">📌 ${escHtml(notes)}</div>` : ''}
+      </div>
+      <span class="client-list-tag">${_cliListName(c.list)}</span>
+    </div>`;
+  }).join('');
+}
+
+function importClientsFromOrders() {
+  const missing = _clientsMissingFromOrders();
+  if (!missing.length) return;
+  const now = new Date().toISOString();
+  missing.forEach(m => {
+    state.clients.push({
+      id: _newClientId(),
+      name: m.name,
+      list: m.list,
+      notes: '',
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+  saveClients();
+  renderClientsList();
+  toast(`${missing.length} ficha${missing.length !== 1 ? 's' : ''} creada${missing.length !== 1 ? 's' : ''} — revisá la lista asignada de cada una`, 'ok');
+}
+
+// ── Crear / editar ficha ──
+let _editingClientId = null; // null = creando una nueva
+
+function openClientForm(id) {
+  _editingClientId = id || null;
+  const c = id ? (state.clients || []).find(x => x.id === id) : null;
+  document.getElementById('clientFormTitle').textContent = c ? 'Editar cliente' : 'Nuevo cliente';
+  document.getElementById('clientFormName').value = c ? c.name : '';
+  document.getElementById('clientFormList').value = c ? c.list : 'act';
+  document.getElementById('clientFormNotes').value = c ? (c.notes || '') : '';
+  document.getElementById('clientFormDeleteBtn').style.display = c ? 'inline-block' : 'none';
+  document.getElementById('overlayClientForm').style.display = 'flex';
+}
+
+function closeClientForm() {
+  document.getElementById('overlayClientForm').style.display = 'none';
+  _editingClientId = null;
+}
+
+function saveClientForm() {
+  const name  = (document.getElementById('clientFormName').value || '').trim();
+  const lista = document.getElementById('clientFormList').value || 'act';
+  const notes = (document.getElementById('clientFormNotes').value || '').trim();
+  if (!name) { toast('Falta el nombre del cliente', 'err'); return; }
+
+  // Dos fichas con el mismo nombre romperían el cruce con los pedidos
+  const dup = findClientFicha(name);
+  if (dup && dup.id !== _editingClientId) {
+    toast('Ya existe una ficha con ese nombre', 'err');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  let c = _editingClientId ? state.clients.find(x => x.id === _editingClientId) : null;
+  const isNew = !c;
+  if (!c) {
+    c = { id: _newClientId(), createdAt: now };
+    state.clients.push(c);
+  }
+  c.name = name;
+  c.list = lista;
+  c.notes = notes;
+  c.updatedAt = now;
+  saveClients();
+  closeClientForm();
+  renderClientsList();
+  if (typeof renderOrdersTab === 'function') renderOrdersTab(); // refresca notas en tarjetas
+  toast(isNew ? `Cliente ${name} creado ✓` : 'Ficha actualizada ✓', 'ok');
+}
+
+function deleteClientForm() {
+  const c = _editingClientId ? state.clients.find(x => x.id === _editingClientId) : null;
+  if (!c) { closeClientForm(); return; }
+  if (!confirm(`¿Borrar la ficha de "${c.name}"?\n\nLos pedidos no se tocan; solo se pierden la lista asignada y las notas.`)) return;
+  state.clients = state.clients.filter(x => x.id !== c.id);
+  saveClients();
+  closeClientForm();
+  renderClientsList();
+  if (typeof renderOrdersTab === 'function') renderOrdersTab();
+  toast(`Ficha de ${c.name} borrada`, 'ok');
+}
 
 // ════════════════════════════════════════════════════════════════════
 // DOCS.JS — Generación de PDF: PRESUPUESTO / REMITO / NOTA DE PEDIDO
@@ -12302,6 +12586,7 @@ if (document.readyState === 'loading') {
       if (typeof loadRubrosMultis === 'function')       loadRubrosMultis();
       if (typeof loadDistribuidorFactor === 'function') loadDistribuidorFactor();
       if (typeof loadReceivedOrders === 'function')     loadReceivedOrders();
+      if (typeof loadClients === 'function')            loadClients();
       if (typeof loadDocConfig === 'function')          loadDocConfig();
       if (typeof loadPrices === 'function')             loadPrices();
     } catch (e) { console.warn('boot reload:', e && e.message); }
