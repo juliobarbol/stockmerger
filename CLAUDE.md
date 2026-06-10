@@ -92,8 +92,10 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 
 ### Pestañas de la UI
 
-`Archivos` (carga de stock), `Stock`, `Precios`, `Pedidos`, `Análisis`,
-`Memoria` (config/backups).
+`Archivos` (carga de stock + backups/nube), `Stock`, `Precios`, `Pedidos`,
+`Análisis`. La pantalla `Memoria` (decisiones de duplicados) no tiene botón
+en la barra: se abre desde un botón "🧠 Ver memoria" al final de Archivos
+(`switchTab('memoria')` resalta la pestaña Archivos).
 
 ## Persistencia
 
