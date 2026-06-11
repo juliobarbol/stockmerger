@@ -2525,6 +2525,21 @@ tr.row-lowstock td{background:#f59e0b08}
         <span id="memBadge" style="display:none;background:var(--red);color:#fff;font-size:.6rem;font-family:'DM Mono',monospace;font-weight:700;min-width:18px;height:18px;border-radius:99px;align-items:center;justify-content:center;padding:0 .35rem"></span>
       </button>
     </div>
+
+    <!-- 🧨 Gran reset (protegido por contraseña) -->
+    <div class="backup-section">
+      <div class="section-title" style="color:var(--red)">🧨 Gran reset</div>
+      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">
+        Borra TODOS los datos (stock, precios, pedidos, clientes, caja y los
+        datos de prueba de la nube) para empezar el uso real desde cero.
+        Antes de borrar descarga un backup de seguridad. Se conservan la
+        conexión a la nube y los datos del emisor. Pide contraseña.
+      </p>
+      <button class="btn-backup" onclick="granReset()" style="width:100%;padding:.6rem;justify-content:center;gap:.5rem;border-color:var(--red)">
+        <span>🧨</span>
+        <span class="btn-backup-name" style="font-size:.8rem;color:var(--red)">Borrar todo y empezar de cero</span>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -3606,13 +3621,15 @@ const Store = (function () {
 
   function usingIdb() { return !!_db; }
   function isReady()  { return _ready; }
+  // Todas las claves conocidas (para el gran reset).
+  function keys() { return [..._mem.keys()]; }
   // Solo para diagnóstico/migración: claves y tamaño aproximado en memoria.
   function _stats() {
     let bytes = 0; for (const v of _mem.values()) bytes += (v ? v.length : 0);
     return { keys: _mem.size, approxKB: Math.round(bytes / 1024), idb: usingIdb() };
   }
 
-  return { init, get, set, remove, flushNow, usingIdb, isReady, _stats };
+  return { init, get, set, remove, keys, flushNow, usingIdb, isReady, _stats };
 })();
 
 // Exponer como global para que el resto de los módulos lo usen.
@@ -9175,6 +9192,178 @@ function exportForVendor(list) {
   exportAllVendorLists();
 }
 
+
+// ════════════════════════════════════════════════════════════════════
+// GRAN RESET — borrar TODO para pasar de pruebas a uso real
+// ════════════════════════════════════════════════════════════════════
+//
+// Botón al final de la pestaña Archivos, protegido por contraseña.
+// Pensado para UNA situación: Julio probó la app con datos reales-de-prueba
+// y, al entregarla, hay que dejar todo en cero.
+//
+// QUÉ BORRA:
+//   - Local: TODAS las claves del Store/localStorage (stock, precios,
+//     pedidos, clientes, caja, memoria, historiales, cursores de sync...)
+//     SALVO la lista GRAN_RESET_KEEP (conexión a la nube + datos del emisor).
+//   - Nube (si está configurada): filas del ns en orders, clients,
+//     received_orders, catalog_items, rubro_multipliers, settings y catalog,
+//     y los snapshots del bucket `backups`.
+//
+// SEGURIDAD:
+//   - Antes de borrar descarga un backup completo (best-effort).
+//   - `orders` y `catalog` necesitan policies de DELETE (schema.sql las
+//     agrega desde esta versión). Si el proyecto Supabase corre un schema
+//     viejo, el borrado no falla pero deja las filas: se VERIFICA con un
+//     count y se avisa. Como red de seguridad extra, si quedaron pedidos
+//     de prueba en la nube se adelanta el cursor sb_orders_lastpull para
+//     que ESTE dispositivo no los re-importe.
+// ════════════════════════════════════════════════════════════════════
+
+const GRAN_RESET_PASS = 'opbayresgranreset';
+const GRAN_RESET_KEEP = ['sb_config', 'docconfig'];
+
+async function granReset() {
+  const pass = prompt(
+    '🧨 GRAN RESET\n\n' +
+    'Esto borra TODOS los datos de la app (stock, precios, pedidos, clientes, ' +
+    'caja y los datos de prueba de la nube) para empezar de cero.\n\n' +
+    'Para continuar, escribí la contraseña:'
+  );
+  if (pass === null) return;
+  if (pass.trim() !== GRAN_RESET_PASS) {
+    toast('Contraseña incorrecta — no se borró nada.', 'err');
+    return;
+  }
+
+  const cloud = (typeof scLibReady === 'function' && scLibReady() &&
+                 typeof scIsConfigured === 'function' && scIsConfigured());
+  let msg = '⚠️ ÚLTIMA CONFIRMACIÓN\n\nSe va a borrar TODO:\n' +
+    '• Stock y precios\n' +
+    '• Pedidos recibidos\n' +
+    '• Clientes y cuenta corriente\n' +
+    '• Caja (movimientos y cotización)\n' +
+    '• Memoria de duplicados e historiales\n';
+  if (cloud) msg += '• Datos de prueba en la nube (pedidos, fichas, catálogo, snapshots)\n';
+  msg += '\nSe conservan la conexión a la nube y los datos del emisor.\n' +
+    'Antes de borrar se descarga un backup completo de seguridad.\n\n¿Borrar todo?';
+  if (!confirm(msg)) return;
+
+  // 1. Backup de seguridad (best-effort: si no hay nada que exportar, sigue)
+  try { exportBackup(false); } catch (e) { console.warn('granReset backup:', e); }
+
+  // 2. Nube (mientras todavía hay conexión configurada y datos para verificar)
+  let cloudResult = { warns: [], ordersLeft: false };
+  if (cloud) {
+    toast('Borrando datos de prueba de la nube…', 'ok');
+    try { cloudResult = await _granResetCloud(); }
+    catch (e) { cloudResult.warns.push('No se pudieron borrar los datos de la nube: ' + (e.message || e)); }
+  }
+
+  // 3. Local: TODAS las claves salvo las conservadas.
+  //    Store.remove también limpia IndexedDB y el respaldo de localStorage.
+  try {
+    (typeof Store.keys === 'function' ? Store.keys() : []).forEach(k => {
+      if (!GRAN_RESET_KEEP.includes(k)) Store.remove(k);
+    });
+    // Claves que nunca pasaron por Store (guards de confirmación, etc.)
+    const lsKeys = [];
+    try { for (let i = 0; i < localStorage.length; i++) lsKeys.push(localStorage.key(i)); } catch (e) {}
+    lsKeys.forEach(k => {
+      if (!GRAN_RESET_KEEP.includes(k)) { try { localStorage.removeItem(k); } catch (e) {} }
+    });
+  } catch (e) { console.warn('granReset local:', e); }
+
+  // Red de seguridad: si quedaron pedidos de prueba en la nube, que este
+  // dispositivo no los re-importe en el próximo pull.
+  if (cloudResult.ordersLeft) {
+    try { Store.set('sb_orders_lastpull', new Date().toISOString()); } catch (e) {}
+  }
+
+  // El alert bloquea hasta que el usuario toca OK — eso también le da
+  // tiempo a IndexedDB a terminar los borrados antes del reload.
+  if (cloudResult.warns.length) {
+    alert('La app quedó en cero, PERO con avisos:\n\n• ' + cloudResult.warns.join('\n• '));
+  } else {
+    alert('✅ Gran reset completo. La app queda en cero, lista para el uso real.');
+  }
+  location.reload();
+}
+
+// Borra los datos del ns en la nube. Devuelve { warns: [], ordersLeft: bool }.
+async function _granResetCloud() {
+  const out = { warns: [], ordersLeft: false };
+  const client = scClient();
+  if (!client) {
+    out.warns.push('No se pudo conectar a la nube: los datos de prueba de la nube NO se borraron.');
+    out.ordersLeft = true;
+    return out;
+  }
+  const ns = scGetConfig().ns;
+
+  // Tablas con policy de borrado garantizada (for all)
+  for (const t of ['clients', 'received_orders', 'catalog_items', 'rubro_multipliers', 'settings']) {
+    try {
+      const { error } = await client.from(t).delete().eq('ns', ns);
+      if (error) throw error;
+    } catch (e) {
+      out.warns.push(`No se pudo limpiar "${t}" en la nube (${e.message || e}).`);
+    }
+  }
+
+  // orders: en proyectos con schema viejo el DELETE no tiene permiso y borra
+  // 0 filas SIN error → verificar con un count.
+  try {
+    const { error } = await client.from('orders').delete().eq('ns', ns);
+    if (error) throw error;
+    const { count, error: e2 } = await client
+      .from('orders').select('order_id', { count: 'exact', head: true }).eq('ns', ns);
+    if (e2) throw e2;
+    if (count > 0) {
+      out.ordersLeft = true;
+      out.warns.push(
+        `Quedaron ${count} pedidos de prueba en la nube: el proyecto Supabase no permite borrarlos. ` +
+        `Hay que correr el schema.sql actualizado en el SQL Editor de Supabase y repetir el gran reset.`
+      );
+    }
+  } catch (e) {
+    out.ordersLeft = true;
+    out.warns.push('No se pudieron borrar los pedidos de prueba de la nube (' + (e.message || e) + ').');
+  }
+
+  // catalog: si el DELETE no tiene permiso, pisarlo con un catálogo vacío
+  // (la policy de UPDATE existe desde siempre) para que los vendedores no
+  // sigan viendo los productos de prueba.
+  try {
+    const { error } = await client.from('catalog').delete().eq('id', ns);
+    if (error) throw error;
+    const { count, error: e2 } = await client
+      .from('catalog').select('id', { count: 'exact', head: true }).eq('id', ns);
+    if (e2) throw e2;
+    if (count > 0) {
+      const empty = {
+        _app: 'StockMerger', _type: 'vendor_data_v2', _version: 2,
+        _exportedAt: new Date().toISOString(),
+        stock: [], prices: { act: {}, dist: {}, vip: {} },
+        order: { rubros: [], marcas: [] },
+      };
+      const { error: e3 } = await client.from('catalog')
+        .upsert({ id: ns, payload: empty, updated_at: new Date().toISOString() });
+      if (e3) throw e3;
+    }
+  } catch (e) {
+    out.warns.push('No se pudo limpiar el catálogo publicado en la nube (' + (e.message || e) + ').');
+  }
+
+  // Snapshots de respaldo del bucket `backups` (contienen datos de prueba)
+  try {
+    const { data } = await client.storage.from('backups').list(ns, { limit: 100 });
+    if (data && data.length) {
+      await client.storage.from('backups').remove(data.map(f => `${ns}/${f.name}`));
+    }
+  } catch (e) { /* bucket opcional — silencioso */ }
+
+  return out;
+}
 
 // ════════════════════════════════════════════════════════════════════
 // BACKUPS.JS — Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube)
