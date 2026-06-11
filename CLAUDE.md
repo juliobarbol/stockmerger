@@ -230,6 +230,12 @@ Dos canales equivalentes, según haya nube o no:
 ## Notas de desarrollo
 
 - No hay tests ni linters; es HTML+JS plano servido estático.
+- **Acceso directo a Supabase**: si la variable de entorno
+  `SUPABASE_ACCESS_TOKEN` está definida, usarla con la Management API
+  (`api.supabase.com`, proyecto `stock-bayres`, ref `dxntcbssxjxtxznkdsot`,
+  endpoint `/v1/projects/<ref>/database/query`) para consultar/ajustar la
+  base directamente. ⚠️ NUNCA commitear tokens/secretos al repo: el repo SE
+  PUBLICA tal cual como app en Cloudflare y el historial de git no se borra.
 - Para cambios de catálogo/pedido, verificá la app hermana
   (`juliobarbol/stockvendedor`): comparten formato `vendor_data_v2`, esquema de
   `orders` y la normalización de `_key`.
