@@ -2302,6 +2302,35 @@ tr.row-lowstock td{background:#f59e0b08}
   color:var(--muted);
 }
 
+/* ══ CAJA / TESORERÍA (v26) ══ */
+.caja-rate-box{display:flex;align-items:center;gap:.4rem;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:.3rem .6rem;font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted)}
+.caja-rate-box input{width:7.5rem;min-height:0;padding:.3rem .45rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-family:'DM Mono',monospace;font-size:.8rem}
+.caja-subtabs{display:flex;gap:.3rem;padding:.5rem 1rem .4rem;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;background:var(--bg)}
+.caja-subtabs::-webkit-scrollbar{display:none}
+.caja-body{padding:1rem;max-width:1100px;margin:0 auto;width:100%}
+.caja-section{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.9rem 1rem;margin-bottom:1rem}
+.caja-section h3{font-size:.8rem;font-weight:800;margin-bottom:.7rem;display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.caja-section h3 .caja-h-actions{margin-left:auto;display:flex;gap:.4rem;align-items:center}
+.caja-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;margin-bottom:1rem}
+.caja-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.7rem .8rem}
+.caja-card .cc-name{font-size:.62rem;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.caja-card .cc-val{font-size:1.05rem;font-weight:800;margin-top:.25rem;font-family:'DM Mono',monospace}
+.caja-table{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.74rem}
+.caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
+.caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
+.caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
+.caja-table tr.caja-total td{border-top:2px solid var(--border);font-weight:700;color:var(--text)}
+.caja-pos{color:var(--accent)}
+.caja-neg{color:var(--red)}
+.caja-muted{color:var(--muted)}
+.caja-chiprow{display:flex;gap:.35rem;flex-wrap:wrap;align-items:center;margin-bottom:.7rem}
+.caja-chiprow input[type=date],.caja-chiprow select{width:auto;min-height:0;padding:.4rem .55rem;font-size:.72rem}
+.caja-mini-btn{background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'Syne',sans-serif;font-weight:700;font-size:.66rem;padding:.32rem .6rem;border-radius:7px;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.caja-mini-btn:hover{border-color:var(--accent);color:var(--accent)}
+.caja-mini-btn.danger:hover{border-color:var(--red);color:var(--red)}
+.caja-pct-input{width:4.2rem;min-height:0;padding:.3rem .4rem;font-size:.74rem;text-align:right}
+.caja-empty{color:var(--muted);font-family:'DM Mono',monospace;font-size:.74rem;padding:.6rem .2rem}
+@media (max-width:640px){ .caja-body{padding:.7rem} .caja-section{padding:.7rem} }
 </style>
 </head>
 <body>
@@ -2328,6 +2357,10 @@ tr.row-lowstock td{background:#f59e0b08}
   <button class="tab-btn" id="tab-analisis" onclick="switchTab('analisis')">
     <span class="tab-icon">📈</span>
     <span class="tab-label">Análisis</span>
+  </button>
+  <button class="tab-btn" id="tab-caja" onclick="switchTab('caja')">
+    <span class="tab-icon">💰</span>
+    <span class="tab-label">Caja</span>
   </button>
 </nav>
 
@@ -2988,6 +3021,28 @@ tr.row-lowstock td{background:#f59e0b08}
   </div>
 </div>
 
+<!-- ══ TAB: CAJA / TESORERÍA (v26) ══ -->
+<div class="tab-page" id="pageCaja">
+  <div class="orders-toolbar">
+    <span class="pt-title">Caja y tesorería</span>
+    <div class="caja-rate-box" title="Cotización del día: 1 USD = ARS. Se usa para convertir pagos en pesos a dólares.">
+      <span>1 USD =</span>
+      <input type="number" id="cajaRateInput" min="0" step="0.01" placeholder="cotización"
+        onchange="setCajaRate(this.value)">
+      <span>ARS</span>
+    </div>
+    <button class="btn-orders primary" onclick="openMovForm()">➕ Movimiento</button>
+  </div>
+  <div class="caja-subtabs">
+    <button class="an-subtab active" data-cajatab="caja"      onclick="setCajaSubtab('caja')">📒 Caja</button>
+    <button class="an-subtab"        data-cajatab="calle"     onclick="setCajaSubtab('calle')">💵 Dinero en calle</button>
+    <button class="an-subtab"        data-cajatab="reportes"  onclick="setCajaSubtab('reportes')">📊 Reportes</button>
+  </div>
+  <div class="scroll-body">
+    <div id="cajaBody" class="caja-body"></div>
+  </div>
+</div>
+
 <!-- ══ OVERLAY: EDITAR RUBRO (multiplicadores L7/VIP por rubro) ══ -->
 <div class="overlay-orders" id="overlayRubro">
   <div class="ov-box">
@@ -3258,12 +3313,75 @@ tr.row-lowstock td{background:#f59e0b08}
           <label>Notas internas (no las ven los vendedores)</label>
           <textarea id="clientFormNotes" rows="4" placeholder="Info del cliente para no olvidar..."></textarea>
         </div>
+        <div>
+          <label>Deuda inicial en USD (saldo previo a usar la app — opcional)</label>
+          <input type="number" id="clientFormSaldoIni" step="0.01" placeholder="0.00">
+        </div>
       </div>
     </div>
     <div class="ov-foot">
       <button class="ov-btn" id="clientFormDeleteBtn" style="margin-right:auto;color:var(--red);border-color:var(--red)" onclick="deleteClientForm()">🗑 Borrar</button>
       <button class="ov-btn" onclick="closeClientForm()">Cancelar</button>
       <button class="ov-btn primary" onclick="saveClientForm()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ OVERLAY: NUEVO MOVIMIENTO DE CAJA (v26) ══ -->
+<div class="overlay-orders" id="overlayMov">
+  <div class="ov-box">
+    <div class="ov-head">
+      <h2>➕ Movimiento de caja</h2>
+      <button class="ov-close" onclick="closeMovForm()">✕</button>
+    </div>
+    <div class="ov-body">
+      <div class="ov-form">
+        <div>
+          <label>Fecha</label>
+          <input type="date" id="movFecha">
+        </div>
+        <div>
+          <label>Tipo de movimiento</label>
+          <select id="movCat" onchange="movFormSync()">
+            <option value="cobranza">💵 Cobranza de cliente (entra)</option>
+            <option value="ingreso">➕ Otro ingreso (entra)</option>
+            <option value="gasto">🧾 Gasto (sale)</option>
+            <option value="impuesto">🏛 Impuesto (sale)</option>
+            <option value="egreso">➖ Otro egreso (sale)</option>
+          </select>
+        </div>
+        <div id="movClientRow">
+          <label>Cliente (la cobranza baja su deuda)</label>
+          <input type="text" id="movClient" list="movClientsDL" placeholder="Nombre del cliente" autocomplete="off">
+          <datalist id="movClientsDL"></datalist>
+        </div>
+        <div>
+          <label>Cuenta</label>
+          <select id="movAccount" onchange="movFormSync()">
+            <option value="pesos">💵 Caja Pesos (ARS)</option>
+            <option value="usd">💲 Caja Dólares (USD)</option>
+            <option value="mp">📱 Mercado Pago (ARS)</option>
+            <option value="lemon">🍋 Lemon (ARS)</option>
+          </select>
+        </div>
+        <div>
+          <label id="movMontoLabel">Monto</label>
+          <input type="number" id="movMonto" min="0" step="0.01" placeholder="0.00" oninput="movFormSync()">
+        </div>
+        <div id="movRateRow">
+          <label>Cotización (1 USD = ARS)</label>
+          <input type="number" id="movRate" min="0" step="0.01" oninput="movFormSync()">
+          <div id="movUsdHint" style="font-size:.68rem;font-family:'DM Mono',monospace;color:var(--muted);margin-top:.3rem"></div>
+        </div>
+        <div>
+          <label>Concepto / detalle</label>
+          <input type="text" id="movConcepto" placeholder="Ej: expensas oficina, IIBB, pago de Juan..." autocomplete="off">
+        </div>
+      </div>
+    </div>
+    <div class="ov-foot">
+      <button class="ov-btn" onclick="closeMovForm()">Cancelar</button>
+      <button class="ov-btn primary" onclick="saveMovForm()">Guardar</button>
     </div>
   </div>
 </div>
@@ -3613,6 +3731,20 @@ const state = {
   clients: [],
   // ── Config del generador de PDF y datos del emisor ──
   docConfig: null,
+
+  // ── Tesorería (pestaña Caja) — v26 ──
+  // rate: cotización USD→ARS del día (editable a diario).
+  // movements: movimientos de caja. Cada uno:
+  //   { id, date:'YYYY-MM-DD', createdAt: ISO,
+  //     category: 'cobranza'|'ingreso'|'gasto'|'impuesto'|'egreso',
+  //     account:  'pesos'|'usd'|'mp'|'lemon',
+  //     amount:   monto en la moneda de la cuenta (ARS o USD),
+  //     usd:      equivalente en USD (calculado con rate al registrar),
+  //     rate:     cotización usada,
+  //     concept:  texto libre,
+  //     client:   nombre del cliente (solo cobranzas — baja su deuda) }
+  // commissions: { nombreVendedor: porcentaje } para el reporte de comisiones.
+  treasury: { rate: 0, rateUpdatedAt: null, movements: [], commissions: {} },
 };
 
 // Flags globales para el módulo de precios — declarados aquí para evitar
@@ -3938,6 +4070,29 @@ function saveDocConfig() {
 }
 
 loadDocConfig();
+
+// ── Tesorería (caja multi-moneda + cuenta corriente) ──
+const DEFAULT_TREASURY = { rate: 0, rateUpdatedAt: null, movements: [], commissions: {} };
+function loadTreasury() {
+  try {
+    const raw = Store.get('treasury');
+    const t = raw ? JSON.parse(raw) : null;
+    state.treasury = {
+      ...DEFAULT_TREASURY,
+      ...(t && typeof t === 'object' ? t : {}),
+    };
+    if (!Array.isArray(state.treasury.movements)) state.treasury.movements = [];
+    if (!state.treasury.commissions || typeof state.treasury.commissions !== 'object') state.treasury.commissions = {};
+    state.treasury.rate = parseFloat(state.treasury.rate) || 0;
+  } catch (e) {
+    state.treasury = JSON.parse(JSON.stringify(DEFAULT_TREASURY));
+  }
+}
+function saveTreasury() {
+  _safeSetItem('treasury', JSON.stringify(state.treasury), 'los movimientos de caja');
+}
+
+loadTreasury();
 
 // ── Stock persistente ──
 // Se guarda en localStorage para no tener que recargar al reabrir la app.
@@ -5627,6 +5782,7 @@ function switchTab(tab) {
   if (tab === 'precios') initPricesTab();
   if (tab === 'pedidos') renderOrdersTab();
   if (tab === 'analisis') renderAnalyticsTab();
+  if (tab === 'caja') renderCajaTab();
 }
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -8519,6 +8675,8 @@ function buildBackupPayload(settingsOnly = false) {
     docConfig:          state.docConfig,
     clients:            state.clients,
     catalogOrder:       state.catalogOrder,
+    treasury:           state.treasury,    // v26: caja + cuenta corriente
+
     // Modelo v23: multiplicadores por rubro + factor distribuidor
     rubrosMultis:       state.rubrosMultis,
     distribuidorFactor: state.distribuidorFactor,
@@ -8701,6 +8859,17 @@ function applyBackupData(backup, opts = {}) {
       if (backup.clients && Array.isArray(backup.clients)) {
         state.clients = backup.clients;
         saveClients();
+      }
+      // v26: tesorería (caja + cuenta corriente)
+      if (backup.treasury && typeof backup.treasury === 'object' && !Array.isArray(backup.treasury)) {
+        state.treasury = {
+          rate: parseFloat(backup.treasury.rate) || 0,
+          rateUpdatedAt: backup.treasury.rateUpdatedAt || null,
+          movements: Array.isArray(backup.treasury.movements) ? backup.treasury.movements : [],
+          commissions: (backup.treasury.commissions && typeof backup.treasury.commissions === 'object')
+            ? backup.treasury.commissions : {},
+        };
+        saveTreasury();
       }
       // Modelo v23
       if (backup.rubrosMultis && typeof backup.rubrosMultis === 'object') {
@@ -10318,6 +10487,10 @@ function _doConfirmReceivedOrder(localId) {
 
   order.status      = 'confirmado';
   order.confirmedAt = new Date().toISOString();
+  // v26: marca para la cuenta corriente (pestaña Caja). Solo los pedidos
+  // confirmados a partir de esta versión generan deuda del cliente —
+  // los confirmados antes se consideran ya cobrados.
+  order.ctaCte      = true;
 
   saveReceivedOrders();
   saveMerged();
@@ -11057,6 +11230,7 @@ function openClientForm(id) {
   document.getElementById('clientFormName').value = c ? c.name : '';
   document.getElementById('clientFormList').value = c ? c.list : 'act';
   document.getElementById('clientFormNotes').value = c ? (c.notes || '') : '';
+  document.getElementById('clientFormSaldoIni').value = c && c.saldoInicial ? c.saldoInicial : '';
   document.getElementById('clientFormDeleteBtn').style.display = c ? 'inline-block' : 'none';
   document.getElementById('overlayClientForm').style.display = 'flex';
 }
@@ -11089,6 +11263,7 @@ function saveClientForm() {
   c.name = name;
   c.list = lista;
   c.notes = notes;
+  c.saldoInicial = parseFloat(document.getElementById('clientFormSaldoIni').value) || 0;
   c.source = 'central';   // editada a mano: los vendedores ya no la pisan
   c.updatedAt = now;
   saveClients();
@@ -12927,6 +13102,731 @@ if (document.readyState === 'loading') {
 
 
 // ════════════════════════════════════════════════════════════════════
+// CAJA.JS — Tesorería: cajas multi-moneda, cuenta corriente y reportes
+// ════════════════════════════════════════════════════════════════════
+//
+// 🆕 v26 — Pestaña "💰 Caja"
+//
+// TRES SUB-PESTAÑAS:
+//   📒 Caja            → saldos por cuenta (Pesos / Dólares / Mercado Pago /
+//                        Lemon), resumen del día/semana/mes (ingresos,
+//                        egresos, gastos, impuestos) y lista de movimientos.
+//   💵 Dinero en calle → deuda en USD de cada cliente (cuenta corriente),
+//                        registrar pagos, resumen PDF individual y export
+//                        Excel del total.
+//   📊 Reportes        → ventas del mes por lista, comisiones por vendedor
+//                        (% editable) y balance mensual (ventas − gastos −
+//                        impuestos = ganancia neta).
+//
+// MODELO:
+//   - Los movimientos viven en state.treasury.movements (ver state.js).
+//     Cada cuenta tiene moneda fija: Caja Pesos / MP / Lemon en ARS,
+//     Caja Dólares en USD. Todo movimiento guarda su equivalente en USD
+//     (mov.usd) calculado con la cotización al momento de registrarlo —
+//     así los reportes históricos no cambian si la cotización cambia.
+//   - La COTIZACIÓN DEL DÍA (state.treasury.rate) se edita arriba a la
+//     derecha y precarga la conversión de los pagos en pesos.
+//   - CUENTA CORRIENTE: la deuda de un cliente (en USD) =
+//       saldoInicial (ficha) + Σ pedidos confirmados (order.ctaCte)
+//       − Σ cobranzas (movimientos category 'cobranza' con su nombre).
+//     Solo generan deuda los pedidos confirmados desde esta versión
+//     (flag ctaCte en orders.js) — los anteriores se asumen cobrados.
+//   - El cruce cliente↔pedido↔pago es POR NOMBRE normalizado (_cliKey),
+//     igual que el cruce de fichas con pedidos en clients.js.
+//
+// Nada de esto viaja a StockVendedor: es contabilidad interna de la central.
+// ════════════════════════════════════════════════════════════════════
+
+const CAJA_ACCOUNTS = [
+  { id: 'pesos', name: 'Caja Pesos',   cur: 'ARS', icon: '💵' },
+  { id: 'usd',   name: 'Caja Dólares', cur: 'USD', icon: '💲' },
+  { id: 'mp',    name: 'Mercado Pago', cur: 'ARS', icon: '📱' },
+  { id: 'lemon', name: 'Lemon',        cur: 'ARS', icon: '🍋' },
+];
+const CAJA_CATS = {
+  cobranza: { name: 'Cobranza',     dir:  1 },
+  ingreso:  { name: 'Otro ingreso', dir:  1 },
+  gasto:    { name: 'Gasto',        dir: -1 },
+  impuesto: { name: 'Impuesto',     dir: -1 },
+  egreso:   { name: 'Otro egreso',  dir: -1 },
+};
+
+function _cajaAcc(id)  { return CAJA_ACCOUNTS.find(a => a.id === id) || CAJA_ACCOUNTS[0]; }
+function _cajaCat(id)  { return CAJA_CATS[id] || CAJA_CATS.ingreso; }
+function _ymd(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _cajaToday()  { return _ymd(new Date()); }
+function _ymLabel(ym) {
+  const [y, m] = String(ym).split('-').map(Number);
+  if (!y || !m) return ym;
+  const s = new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function _fmtMon(n, cur) { return (cur === 'USD' ? 'USD ' : '$ ') + _fmtN(n || 0); }
+
+// ── Estado de la vista (no se persiste) ──
+const _cajaView = {
+  tab: 'caja',                 // 'caja' | 'calle' | 'reportes'
+  range: 'day',                // 'day' | 'week' | 'month' | 'all'
+  date: null,                  // 'YYYY-MM-DD' (null = hoy)
+  account: 'all',
+  month: null,                 // 'YYYY-MM' para reportes (null = mes actual)
+};
+
+// ── Cotización del día ──
+function setCajaRate(v) {
+  const rate = parseFloat(v);
+  if (!rate || rate <= 0) { toast('Cotización inválida', 'err'); renderCajaTab(); return; }
+  state.treasury.rate = rate;
+  state.treasury.rateUpdatedAt = new Date().toISOString();
+  saveTreasury();
+  toast(`Cotización del día: 1 USD = $ ${_fmtN(rate)} ✓`, 'ok');
+  renderCajaTab();
+}
+
+// ── Sub-pestañas ──
+function setCajaSubtab(t) {
+  _cajaView.tab = t;
+  document.querySelectorAll('.caja-subtabs .an-subtab').forEach(b => {
+    b.classList.toggle('active', b.dataset.cajatab === t);
+  });
+  renderCajaTab();
+}
+function setCajaRange(r)   { _cajaView.range = r; renderCajaTab(); }
+function setCajaDate(v)    { if (v) _cajaView.date = v; renderCajaTab(); }
+function setCajaAccount(v) { _cajaView.account = v; renderCajaTab(); }
+function setCajaMonth(v)   { _cajaView.month = v; renderCajaTab(); }
+
+// ── Rango de fechas activo (strings YYYY-MM-DD, comparables) ──
+function _cajaRangeBounds() {
+  const dStr = _cajaView.date || _cajaToday();
+  if (_cajaView.range === 'all') return { from: null, to: null };
+  if (_cajaView.range === 'day') return { from: dStr, to: dStr };
+  const d = new Date(dStr + 'T00:00:00');
+  if (_cajaView.range === 'week') {
+    const dow = (d.getDay() + 6) % 7; // lunes = 0
+    const from = new Date(d); from.setDate(d.getDate() - dow);
+    const to = new Date(from); to.setDate(from.getDate() + 6);
+    return { from: _ymd(from), to: _ymd(to) };
+  }
+  // mes de la fecha elegida
+  return {
+    from: _ymd(new Date(d.getFullYear(), d.getMonth(), 1)),
+    to:   _ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)),
+  };
+}
+
+function _cajaFilteredMovs() {
+  const { from, to } = _cajaRangeBounds();
+  return (state.treasury.movements || []).filter(m => {
+    if (_cajaView.account !== 'all' && m.account !== _cajaView.account) return false;
+    if (from && m.date < from) return false;
+    if (to && m.date > to) return false;
+    return true;
+  });
+}
+
+// ── Alta / baja de movimientos ──
+function _newMovId() { return 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function addCajaMovement(mov) {
+  state.treasury.movements.push(mov);
+  saveTreasury();
+}
+
+function deleteCajaMovement(id) {
+  const i = (state.treasury.movements || []).findIndex(m => m.id === id);
+  if (i < 0) return;
+  const m = state.treasury.movements[i];
+  const cat = _cajaCat(m.category);
+  const acc = _cajaAcc(m.account);
+  if (!confirm(`¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`)) return;
+  state.treasury.movements.splice(i, 1);
+  saveTreasury();
+  renderCajaTab();
+  toast('Movimiento borrado', 'ok');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FORMULARIO DE MOVIMIENTO (overlay #overlayMov)
+// ════════════════════════════════════════════════════════════════════
+function _movClientNames() {
+  const set = new Map();
+  (state.clients || []).forEach(c => { const n = String(c.name || '').trim(); if (n) set.set(_cliKey(n), n); });
+  (state.receivedOrders || []).forEach(o => { const n = String(o.client || '').trim(); if (n && !set.has(_cliKey(n))) set.set(_cliKey(n), n); });
+  return [...set.values()].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+function openMovForm(cat, client) {
+  document.getElementById('movFecha').value = _cajaView.date || _cajaToday();
+  document.getElementById('movCat').value = CAJA_CATS[cat] ? cat : 'cobranza';
+  document.getElementById('movClient').value = client || '';
+  document.getElementById('movAccount').value = 'pesos';
+  document.getElementById('movMonto').value = '';
+  document.getElementById('movRate').value = state.treasury.rate || state.docConfig?.ultimoTC || '';
+  document.getElementById('movConcepto').value = '';
+  document.getElementById('movClientsDL').innerHTML =
+    _movClientNames().map(n => `<option value="${escHtml(n)}"></option>`).join('');
+  movFormSync();
+  document.getElementById('overlayMov').style.display = 'flex';
+}
+
+function closeMovForm() {
+  document.getElementById('overlayMov').style.display = 'none';
+}
+
+// Sincroniza visibilidad y ayudas del formulario según tipo/cuenta/monto.
+function movFormSync() {
+  const cat = document.getElementById('movCat').value;
+  const acc = _cajaAcc(document.getElementById('movAccount').value);
+  document.getElementById('movClientRow').style.display = (cat === 'cobranza') ? '' : 'none';
+  document.getElementById('movRateRow').style.display = (acc.cur === 'ARS') ? '' : 'none';
+  document.getElementById('movMontoLabel').textContent =
+    `Monto en ${acc.cur === 'USD' ? 'dólares (USD)' : 'pesos (ARS)'} — ${acc.name}`;
+  const monto = parseFloat(document.getElementById('movMonto').value) || 0;
+  const rate = parseFloat(document.getElementById('movRate').value) || 0;
+  const hint = document.getElementById('movUsdHint');
+  hint.textContent = (acc.cur === 'ARS' && monto > 0 && rate > 0)
+    ? `≈ USD ${_fmtN(monto / rate)} a esa cotización`
+    : '';
+}
+
+function saveMovForm() {
+  const date = document.getElementById('movFecha').value;
+  const category = document.getElementById('movCat').value;
+  const account = document.getElementById('movAccount').value;
+  const amount = parseFloat(document.getElementById('movMonto').value);
+  const rateIn = parseFloat(document.getElementById('movRate').value) || 0;
+  const concept = (document.getElementById('movConcepto').value || '').trim();
+  const client = (document.getElementById('movClient').value || '').trim();
+  const acc = _cajaAcc(account);
+
+  if (!date) { toast('Falta la fecha', 'err'); return; }
+  if (!CAJA_CATS[category]) { toast('Tipo de movimiento inválido', 'err'); return; }
+  if (!amount || amount <= 0) { toast('Monto inválido', 'err'); return; }
+  if (category === 'cobranza' && !client) {
+    toast('Una cobranza necesita el nombre del cliente (para bajar su deuda). Si no es de un cliente, usá "Otro ingreso".', 'err');
+    return;
+  }
+
+  // Equivalente en USD: las cuentas en pesos necesitan cotización.
+  let usd, rate;
+  if (acc.cur === 'USD') {
+    usd = amount; rate = rateIn || state.treasury.rate || 0;
+  } else {
+    rate = rateIn || state.treasury.rate || 0;
+    if (!rate || rate <= 0) { toast('Cargá la cotización del día para convertir los pesos a USD', 'err'); return; }
+    usd = amount / rate;
+  }
+
+  addCajaMovement({
+    id: _newMovId(),
+    date,
+    createdAt: new Date().toISOString(),
+    category,
+    account,
+    amount: Math.round(amount * 100) / 100,
+    usd: Math.round(usd * 100) / 100,
+    rate,
+    concept,
+    client: category === 'cobranza' ? client : '',
+  });
+  closeMovForm();
+  renderCajaTab();
+  const dir = _cajaCat(category).dir > 0 ? 'Entrada' : 'Salida';
+  toast(`${dir} registrada en ${acc.name} ✓`, 'ok');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CUENTA CORRIENTE — deuda por cliente (todo en USD)
+// ════════════════════════════════════════════════════════════════════
+function computeClientDebts() {
+  const map = new Map();
+  const ensure = name => {
+    const k = _cliKey(name);
+    if (!map.has(k)) map.set(k, { name, saldoInicial: 0, cargos: 0, pagos: 0, vendor: '', list: 'act', hasFicha: false });
+    return map.get(k);
+  };
+  (state.clients || []).forEach(c => {
+    const n = String(c.name || '').trim();
+    if (!n) return;
+    const e = ensure(n);
+    e.hasFicha = true;
+    e.saldoInicial = parseFloat(c.saldoInicial) || 0;
+    e.vendor = c.vendor || '';
+    e.list = c.list || 'act';
+  });
+  (state.receivedOrders || []).forEach(o => {
+    if (o.status !== 'confirmado' || !o.ctaCte) return;
+    const n = String(o.client || '').trim();
+    if (!n) return;
+    const e = ensure(n);
+    e.cargos += o.total || 0;
+    if (!e.vendor && o.vendor) e.vendor = o.vendor;
+  });
+  (state.treasury.movements || []).forEach(m => {
+    if (m.category !== 'cobranza') return;
+    const n = String(m.client || '').trim();
+    if (!n) return;
+    ensure(n).pagos += m.usd || 0;
+  });
+  const out = [];
+  map.forEach(e => {
+    e.saldo = Math.round((e.saldoInicial + e.cargos - e.pagos) * 100) / 100;
+    if (e.saldoInicial || e.cargos || e.pagos) out.push(e); // solo clientes con actividad
+  });
+  out.sort((a, b) => b.saldo - a.saldo);
+  return out;
+}
+
+// Movimientos de la cuenta corriente de UN cliente, en orden cronológico.
+function _clientStatementRows(name) {
+  const k = _cliKey(name);
+  const rows = [];
+  (state.receivedOrders || []).forEach(o => {
+    if (o.status !== 'confirmado' || !o.ctaCte) return;
+    if (_cliKey(o.client) !== k) return;
+    rows.push({
+      date: String(_saleDate(o) || '').slice(0, 10),
+      detail: `Pedido ${o.orderId || o.localId} — ${o.items.length} items (${_listName(o.list)})` +
+              (o.vendor ? ` — vend. ${o.vendor}` : ''),
+      cargo: o.total || 0,
+      pago: 0,
+    });
+  });
+  (state.treasury.movements || []).forEach(m => {
+    if (m.category !== 'cobranza' || _cliKey(m.client) !== k) return;
+    const acc = _cajaAcc(m.account);
+    let det = `Pago en ${acc.name}`;
+    if (acc.cur === 'ARS') det += ` ($ ${_fmtN(m.amount)} a $ ${_fmtN(m.rate)})`;
+    if (m.concept) det += ` — ${m.concept}`;
+    rows.push({ date: m.date, detail: det, cargo: 0, pago: m.usd || 0 });
+  });
+  rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return rows;
+}
+
+// ── Resumen de cuenta corriente individual (PDF para enviar al cliente) ──
+function exportClientStatement(name) {
+  const debts = computeClientDebts();
+  const entry = debts.find(e => _cliKey(e.name) === _cliKey(name));
+  if (!entry) { toast('Ese cliente no tiene movimientos de cuenta corriente.', 'err'); return; }
+
+  let doc;
+  try {
+    const { jsPDF } = window.jspdf || {};
+    if (!jsPDF) { toast('No se pudo cargar el generador de PDF. Revisá tu conexión.', 'err'); return; }
+    doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    if (typeof doc.autoTable !== 'function') { toast('Faltan dependencias del PDF (autoTable). Recargá la página.', 'err'); return; }
+  } catch (err) {
+    toast('Error al iniciar el generador de PDF: ' + (err.message || 'desconocido'), 'err');
+    return;
+  }
+
+  const MARG_X = 12;
+  const emisor = state.docConfig?.emisor || {};
+  let y = 14;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+  doc.text(emisor.nombre || 'StockMerger', MARG_X, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  y += 5;
+  if (emisor.direccion) { doc.text(String(emisor.direccion), MARG_X, y); y += 4.5; }
+  if (emisor.telefono)  { doc.text(`TEL: ${emisor.telefono}`, MARG_X, y); y += 4.5; }
+  y += 3;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text('RESUMEN DE CUENTA CORRIENTE', 105, y, { align: 'center' });
+  y += 7;
+  doc.setFontSize(10);
+  doc.text(`Cliente: ${entry.name}`, MARG_X, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Fecha: ${_todayDDMMYYYY()}`, 210 - MARG_X, y, { align: 'right' });
+  y += 4;
+
+  // Filas: saldo inicial (si hay) + cargos y pagos en orden, con saldo corrido
+  const rows = [];
+  let saldo = 0;
+  if (entry.saldoInicial) {
+    saldo = entry.saldoInicial;
+    rows.push(['—', 'Saldo inicial', '', '', _fmtN(saldo)]);
+  }
+  _clientStatementRows(entry.name).forEach(r => {
+    saldo += r.cargo - r.pago;
+    const f = r.date ? r.date.split('-').reverse().join('/') : '—';
+    rows.push([f, r.detail, r.cargo ? _fmtN(r.cargo) : '', r.pago ? _fmtN(r.pago) : '', _fmtN(saldo)]);
+  });
+
+  doc.autoTable({
+    startY: y + 2,
+    margin: { left: MARG_X, right: MARG_X },
+    head: [['FECHA', 'DETALLE', 'CARGO USD', 'PAGO USD', 'SALDO USD']],
+    body: rows,
+    styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 1.6 },
+    headStyles: { fillColor: [30, 37, 53], textColor: 255, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: 20 }, 2: { halign: 'right', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 24 }, 4: { halign: 'right', cellWidth: 26 } },
+  });
+
+  let yEnd = (doc.lastAutoTable?.finalY || y) + 8;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text(`SALDO PENDIENTE: USD ${_fmtN(entry.saldo)}`, 210 - MARG_X, yEnd, { align: 'right' });
+  if (state.treasury.rate > 0 && entry.saldo > 0) {
+    yEnd += 5.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(`≈ $ ${_fmtN(entry.saldo * state.treasury.rate)} (1 USD = $ ${_fmtN(state.treasury.rate)})`, 210 - MARG_X, yEnd, { align: 'right' });
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+  doc.text('Generado por StockMerger', 105, 290, { align: 'center' });
+
+  const safeName = entry.name.replace(/[^\w\sáéíóúñÁÉÍÓÚÑ-]/g, '').trim().replace(/\s+/g, '_') || 'cliente';
+  doc.save(`Resumen_CtaCte_${safeName}_${_cajaToday()}.pdf`);
+  toast(`Resumen de ${entry.name} descargado ✓`, 'ok');
+}
+
+// ── Reporte "Dinero en calle" (Excel con la deuda de todos) ──
+function exportDineroEnCalle() {
+  const debts = computeClientDebts().filter(e => Math.abs(e.saldo) >= 0.01);
+  if (!debts.length) { toast('No hay deudas registradas para exportar.', 'err'); return; }
+  const rows = [['Cliente', 'Vendedor', 'Lista', 'Deuda USD']];
+  let total = 0;
+  debts.forEach(e => {
+    total += e.saldo;
+    rows.push([e.name, e.vendor || '', _listName(e.list), Math.round(e.saldo * 100) / 100]);
+  });
+  rows.push([]);
+  rows.push(['TOTAL DINERO EN CALLE', '', '', Math.round(total * 100) / 100]);
+  if (state.treasury.rate > 0) {
+    rows.push(['Equivalente en pesos (1 USD = $ ' + _fmtN(state.treasury.rate) + ')', '', '', Math.round(total * state.treasury.rate * 100) / 100]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 34 }, { wch: 18 }, { wch: 14 }, { wch: 14 }];
+  ws['!autofilter'] = { ref: `A1:D${debts.length + 1}` };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Dinero en calle');
+  XLSX.writeFile(wb, `Dinero_en_calle_${_cajaToday()}.xlsx`);
+  toast(`Dinero en calle exportado — ${debts.length} clientes ✓`, 'ok');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// REPORTES MENSUALES — ventas por lista, comisiones, balance
+// ════════════════════════════════════════════════════════════════════
+function _cajaOrderYm(o) {
+  const d = new Date(_saleDate(o));
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+// Meses con actividad (ventas o movimientos), más el actual. Orden desc.
+function _cajaMonths() {
+  const set = new Set([_cajaToday().slice(0, 7)]);
+  (state.receivedOrders || []).forEach(o => { if (o.status === 'confirmado') set.add(_cajaOrderYm(o)); });
+  (state.treasury.movements || []).forEach(m => { if (m.date) set.add(String(m.date).slice(0, 7)); });
+  return [...set].sort().reverse();
+}
+
+function setVendorPct(vendor, value) {
+  const pct = parseFloat(value);
+  if (isNaN(pct) || pct < 0 || pct > 100) { toast('Porcentaje inválido (0 a 100)', 'err'); renderCajaTab(); return; }
+  state.treasury.commissions[vendor] = pct;
+  saveTreasury();
+  renderCajaTab();
+}
+
+// Balance mes a mes: ventas (pedidos confirmados, USD) vs. salidas de caja.
+function _cajaMonthlyBalance() {
+  const months = new Map();
+  const ensure = ym => {
+    if (!months.has(ym)) months.set(ym, { ym, ventas: 0, cobrado: 0, gastos: 0, impuestos: 0 });
+    return months.get(ym);
+  };
+  (state.receivedOrders || []).forEach(o => {
+    if (o.status !== 'confirmado') return;
+    ensure(_cajaOrderYm(o)).ventas += o.total || 0;
+  });
+  (state.treasury.movements || []).forEach(m => {
+    if (!m.date) return;
+    const e = ensure(String(m.date).slice(0, 7));
+    if (m.category === 'cobranza') e.cobrado += m.usd || 0;
+    else if (m.category === 'impuesto') e.impuestos += m.usd || 0;
+    else if (m.category === 'gasto' || m.category === 'egreso') e.gastos += m.usd || 0;
+  });
+  return [...months.values()].sort((a, b) => b.ym.localeCompare(a.ym));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RENDER de la pestaña
+// ════════════════════════════════════════════════════════════════════
+function renderCajaTab() {
+  const body = document.getElementById('cajaBody');
+  if (!body) return;
+  const rateInput = document.getElementById('cajaRateInput');
+  if (rateInput && document.activeElement !== rateInput) {
+    rateInput.value = state.treasury.rate > 0 ? state.treasury.rate : '';
+  }
+  if (_cajaView.tab === 'calle') body.innerHTML = _renderCajaCalle();
+  else if (_cajaView.tab === 'reportes') body.innerHTML = _renderCajaReportes();
+  else body.innerHTML = _renderCajaMain();
+}
+
+// ── 📒 Sub-pestaña Caja ──
+function _renderCajaMain() {
+  const t = state.treasury;
+  let html = '';
+
+  // Aviso si la cotización no se tocó hoy
+  const rateDay = t.rateUpdatedAt ? String(t.rateUpdatedAt).slice(0, 10) : '';
+  if (!t.rate) {
+    html += `<div class="caja-empty">⚠️ Cargá la cotización del día (arriba a la derecha) para convertir pesos ↔ dólares.</div>`;
+  } else if (rateDay !== _cajaToday()) {
+    html += `<div class="caja-empty">⚠️ La cotización (1 USD = $ ${_fmtN(t.rate)}) no se actualizó hoy.</div>`;
+  }
+
+  // ── Saldos por cuenta (histórico completo) ──
+  html += `<div class="caja-cards">`;
+  CAJA_ACCOUNTS.forEach(acc => {
+    let bal = 0;
+    (t.movements || []).forEach(m => {
+      if (m.account === acc.id) bal += _cajaCat(m.category).dir * (m.amount || 0);
+    });
+    const cls = bal > 0 ? 'caja-pos' : bal < 0 ? 'caja-neg' : 'caja-muted';
+    html += `<div class="caja-card">
+      <div class="cc-name">${acc.icon} ${acc.name}</div>
+      <div class="cc-val ${cls}">${_fmtMon(bal, acc.cur)}</div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // ── Filtros del período ──
+  const ranges = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['all', 'Todo']];
+  html += `<div class="caja-chiprow">`;
+  ranges.forEach(([r, lbl]) => {
+    html += `<div class="chip ${_cajaView.range === r ? 'active' : ''}" onclick="setCajaRange('${r}')">${lbl}</div>`;
+  });
+  html += `<input type="date" value="${_cajaView.date || _cajaToday()}" onchange="setCajaDate(this.value)">`;
+  html += `<select onchange="setCajaAccount(this.value)">
+    <option value="all">Todas las cuentas</option>
+    ${CAJA_ACCOUNTS.map(a => `<option value="${a.id}" ${_cajaView.account === a.id ? 'selected' : ''}>${a.icon} ${a.name}</option>`).join('')}
+  </select>`;
+  html += `</div>`;
+
+  const movs = _cajaFilteredMovs();
+  const { from, to } = _cajaRangeBounds();
+  const periodo = _cajaView.range === 'all' ? 'todo el historial'
+    : _cajaView.range === 'day' ? `el ${from.split('-').reverse().join('/')}`
+    : `del ${from.split('-').reverse().join('/')} al ${to.split('-').reverse().join('/')}`;
+
+  // ── Resumen del período por tipo ──
+  const sum = {};
+  Object.keys(CAJA_CATS).forEach(c => { sum[c] = { ars: 0, usd: 0, eq: 0 }; });
+  let inEq = 0, outEq = 0;
+  movs.forEach(m => {
+    const s = sum[m.category]; if (!s) return;
+    const acc = _cajaAcc(m.account);
+    if (acc.cur === 'USD') s.usd += m.amount || 0; else s.ars += m.amount || 0;
+    s.eq += m.usd || 0;
+    if (_cajaCat(m.category).dir > 0) inEq += m.usd || 0; else outEq += m.usd || 0;
+  });
+  html += `<div class="caja-section"><h3>📒 Resumen — ${periodo}</h3>`;
+  if (!movs.length) {
+    html += `<div class="caja-empty">Sin movimientos en este período.</div>`;
+  } else {
+    html += `<table class="caja-table"><thead><tr>
+      <th>Concepto</th><th class="num">Pesos (ARS)</th><th class="num">Dólares (USD)</th><th class="num">≈ Total USD</th>
+    </tr></thead><tbody>`;
+    Object.entries(CAJA_CATS).forEach(([id, cat]) => {
+      const s = sum[id];
+      if (!s.ars && !s.usd) return;
+      const sign = cat.dir > 0 ? '' : '−';
+      const cls = cat.dir > 0 ? 'caja-pos' : 'caja-neg';
+      html += `<tr><td>${cat.name}</td>
+        <td class="num">${s.ars ? sign + '$ ' + _fmtN(s.ars) : '—'}</td>
+        <td class="num">${s.usd ? sign + 'USD ' + _fmtN(s.usd) : '—'}</td>
+        <td class="num ${cls}">${sign}USD ${_fmtN(s.eq)}</td></tr>`;
+    });
+    const netEq = inEq - outEq;
+    html += `<tr class="caja-total"><td>Resultado del período</td><td class="num"></td><td class="num"></td>
+      <td class="num ${netEq >= 0 ? 'caja-pos' : 'caja-neg'}">${netEq < 0 ? '−' : ''}USD ${_fmtN(Math.abs(netEq))}</td></tr>`;
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+
+  // ── Lista de movimientos ──
+  html += `<div class="caja-section"><h3>🧾 Movimientos (${movs.length})</h3>`;
+  if (!movs.length) {
+    html += `<div class="caja-empty">Registrá entradas y salidas con el botón ➕ Movimiento.</div>`;
+  } else {
+    const sorted = [...movs].sort((a, b) =>
+      String(b.date).localeCompare(String(a.date)) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    html += `<table class="caja-table"><thead><tr>
+      <th>Fecha</th><th>Tipo</th><th>Cuenta</th><th>Detalle</th><th class="num">Monto</th><th class="num">≈ USD</th><th></th>
+    </tr></thead><tbody>`;
+    sorted.forEach(m => {
+      const cat = _cajaCat(m.category);
+      const acc = _cajaAcc(m.account);
+      const neg = cat.dir < 0;
+      const det = [m.client ? '👤 ' + escHtml(m.client) : '', escHtml(m.concept || '')].filter(Boolean).join(' · ');
+      html += `<tr>
+        <td>${m.date.split('-').reverse().join('/')}</td>
+        <td>${cat.name}</td>
+        <td>${acc.icon} ${acc.name}</td>
+        <td>${det || '<span class="caja-muted">—</span>'}</td>
+        <td class="num ${neg ? 'caja-neg' : 'caja-pos'}">${neg ? '−' : '+'}${_fmtMon(m.amount, acc.cur)}</td>
+        <td class="num caja-muted">${_fmtN(m.usd || 0)}</td>
+        <td class="num"><button class="caja-mini-btn danger" onclick="deleteCajaMovement('${escJsAttr(m.id)}')">🗑</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ── 💵 Sub-pestaña Dinero en calle ──
+function _renderCajaCalle() {
+  const debts = computeClientDebts();
+  let html = `<div class="caja-section"><h3>💵 Dinero en calle — deuda por cliente (USD)
+    <span class="caja-h-actions">
+      <button class="caja-mini-btn" onclick="exportDineroEnCalle()">📤 Exportar Excel</button>
+    </span></h3>`;
+  if (!debts.length) {
+    html += `<div class="caja-empty">Todavía no hay cuenta corriente: la deuda aparece al confirmar pedidos
+      (desde ahora en adelante) o al cargar una deuda inicial en la ficha del cliente (👥 Clientes, pestaña Pedidos).</div></div>`;
+    return html;
+  }
+  let total = 0;
+  html += `<table class="caja-table"><thead><tr>
+    <th>Cliente</th><th>Vendedor</th><th>Lista</th>
+    <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
+  </tr></thead><tbody>`;
+  debts.forEach(e => {
+    total += e.saldo;
+    const cls = e.saldo > 0.009 ? 'caja-neg' : e.saldo < -0.009 ? 'caja-pos' : 'caja-muted';
+    const cargosTot = e.saldoInicial + e.cargos;
+    html += `<tr>
+      <td>${escHtml(e.name)}</td>
+      <td>${escHtml(e.vendor || '—')}</td>
+      <td>${e.hasFicha ? _listName(e.list) : '—'}</td>
+      <td class="num">${_fmtN(cargosTot)}</td>
+      <td class="num">${_fmtN(e.pagos)}</td>
+      <td class="num ${cls}"><b>${_fmtN(e.saldo)}</b></td>
+      <td class="num" style="white-space:nowrap">
+        <button class="caja-mini-btn" onclick="openMovForm('cobranza','${escJsAttr(e.name)}')">💵 Pago</button>
+        <button class="caja-mini-btn" onclick="exportClientStatement('${escJsAttr(e.name)}')">📄 Resumen</button>
+      </td>
+    </tr>`;
+  });
+  html += `<tr class="caja-total"><td colspan="5">TOTAL DINERO EN CALLE</td>
+    <td class="num ${total > 0 ? 'caja-neg' : 'caja-pos'}"><b>USD ${_fmtN(total)}</b></td><td></td></tr>`;
+  if (state.treasury.rate > 0) {
+    html += `<tr><td colspan="5" class="caja-muted">Equivalente en pesos (1 USD = $ ${_fmtN(state.treasury.rate)})</td>
+      <td class="num caja-muted">$ ${_fmtN(total * state.treasury.rate)}</td><td></td></tr>`;
+  }
+  html += `</tbody></table>`;
+  html += `<div class="caja-empty" style="margin-top:.5rem">Los pedidos confirmados ANTES de esta versión se consideran ya cobrados y no suman deuda.
+    Para deudas previas usá el campo "Deuda inicial" de la ficha del cliente.</div>`;
+  html += `</div>`;
+  return html;
+}
+
+// ── 📊 Sub-pestaña Reportes ──
+function _renderCajaReportes() {
+  const months = _cajaMonths();
+  const ym = _cajaView.month && months.includes(_cajaView.month) ? _cajaView.month : months[0];
+  const monthOrders = (state.receivedOrders || []).filter(o => o.status === 'confirmado' && _cajaOrderYm(o) === ym);
+
+  let html = `<div class="caja-chiprow">
+    <span class="caja-muted" style="font-size:.72rem;font-family:'DM Mono',monospace">Mes:</span>
+    <select onchange="setCajaMonth(this.value)">
+      ${months.map(m => `<option value="${m}" ${m === ym ? 'selected' : ''}>${_ymLabel(m)}</option>`).join('')}
+    </select>
+  </div>`;
+
+  // ── Ventas del mes por lista de precios ──
+  const byList = { act: { usd: 0, orders: 0 }, dist: { usd: 0, orders: 0 }, vip: { usd: 0, orders: 0 } };
+  let mesTotal = 0;
+  monthOrders.forEach(o => {
+    const l = byList[o.list] ? o.list : 'act';
+    byList[l].usd += o.total || 0;
+    byList[l].orders += 1;
+    mesTotal += o.total || 0;
+  });
+  html += `<div class="caja-section"><h3>📋 Ventas de ${_ymLabel(ym)} por lista de precios</h3>`;
+  if (!monthOrders.length) {
+    html += `<div class="caja-empty">Sin pedidos confirmados en este mes.</div>`;
+  } else {
+    html += `<table class="caja-table"><thead><tr>
+      <th>Lista</th><th class="num">Pedidos</th><th class="num">USD</th><th class="num">% del mes</th>
+    </tr></thead><tbody>`;
+    [['act', '📋 Lista 7'], ['dist', '🚛 Distribuidor'], ['vip', '⭐ VIP']].forEach(([id, lbl]) => {
+      const e = byList[id];
+      const pct = mesTotal > 0 ? (e.usd / mesTotal * 100) : 0;
+      html += `<tr><td>${lbl}</td><td class="num">${e.orders}</td>
+        <td class="num">USD ${_fmtN(e.usd)}</td><td class="num">${_fmtN(pct, 1)}%</td></tr>`;
+    });
+    html += `<tr class="caja-total"><td>Total</td><td class="num">${monthOrders.length}</td>
+      <td class="num">USD ${_fmtN(mesTotal)}</td><td class="num">100%</td></tr>`;
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+
+  // ── Comisiones por vendedor ──
+  const byVendor = new Map();
+  monthOrders.forEach(o => {
+    const v = o.vendor || '(sin vendedor)';
+    if (!byVendor.has(v)) byVendor.set(v, { name: v, usd: 0, orders: 0 });
+    const e = byVendor.get(v);
+    e.usd += o.total || 0;
+    e.orders += 1;
+  });
+  html += `<div class="caja-section"><h3>👤 Comisiones de ${_ymLabel(ym)} por vendedor</h3>`;
+  if (!byVendor.size) {
+    html += `<div class="caja-empty">Sin ventas este mes.</div>`;
+  } else {
+    let totCom = 0;
+    html += `<table class="caja-table"><thead><tr>
+      <th>Vendedor</th><th class="num">Pedidos</th><th class="num">Ventas USD</th><th class="num">% comisión</th><th class="num">Comisión USD</th>
+    </tr></thead><tbody>`;
+    [...byVendor.values()].sort((a, b) => b.usd - a.usd).forEach(v => {
+      const pct = parseFloat(state.treasury.commissions[v.name]) || 0;
+      const com = v.usd * pct / 100;
+      totCom += com;
+      html += `<tr><td>${escHtml(v.name)}</td><td class="num">${v.orders}</td>
+        <td class="num">USD ${_fmtN(v.usd)}</td>
+        <td class="num"><input type="number" class="caja-pct-input" min="0" max="100" step="0.5" value="${pct || ''}"
+          placeholder="0" onchange="setVendorPct('${escJsAttr(v.name)}', this.value)"> %</td>
+        <td class="num caja-pos">USD ${_fmtN(com)}</td></tr>`;
+    });
+    html += `<tr class="caja-total"><td colspan="4">Total comisiones</td>
+      <td class="num caja-pos">USD ${_fmtN(totCom)}</td></tr>`;
+    html += `</tbody></table>`;
+    html += `<div class="caja-empty" style="margin-top:.4rem">El % se guarda por vendedor y se aplica sobre las ventas confirmadas de su cartera del mes.</div>`;
+  }
+  html += `</div>`;
+
+  // ── Balance de rentabilidad mensual ──
+  const balance = _cajaMonthlyBalance();
+  html += `<div class="caja-section"><h3>📈 Balance mensual (USD) — ventas − gastos − impuestos</h3>`;
+  if (!balance.length) {
+    html += `<div class="caja-empty">Sin datos todavía.</div>`;
+  } else {
+    html += `<table class="caja-table"><thead><tr>
+      <th>Mes</th><th class="num">Ventas</th><th class="num">Cobrado</th><th class="num">Gastos</th><th class="num">Impuestos</th><th class="num">Ganancia neta</th>
+    </tr></thead><tbody>`;
+    balance.slice(0, 13).forEach(b => {
+      const neto = b.ventas - b.gastos - b.impuestos;
+      html += `<tr><td>${_ymLabel(b.ym)}</td>
+        <td class="num">${_fmtN(b.ventas)}</td>
+        <td class="num">${_fmtN(b.cobrado)}</td>
+        <td class="num">${b.gastos ? '−' + _fmtN(b.gastos) : '—'}</td>
+        <td class="num">${b.impuestos ? '−' + _fmtN(b.impuestos) : '—'}</td>
+        <td class="num ${neto >= 0 ? 'caja-pos' : 'caja-neg'}"><b>${_fmtN(neto)}</b></td></tr>`;
+    });
+    html += `</tbody></table>`;
+    html += `<div class="caja-empty" style="margin-top:.4rem">Ventas = pedidos confirmados del mes. Gastos e impuestos = salidas de caja convertidas a USD con la cotización de cada movimiento.</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // BOOT.JS — Orquesta el arranque con el almacén durable (IndexedDB)
 // ════════════════════════════════════════════════════════════════════
 //
@@ -12963,6 +13863,7 @@ if (document.readyState === 'loading') {
       if (typeof loadReceivedOrders === 'function')     loadReceivedOrders();
       if (typeof loadClients === 'function')            loadClients();
       if (typeof loadDocConfig === 'function')          loadDocConfig();
+      if (typeof loadTreasury === 'function')           loadTreasury();
       if (typeof loadPrices === 'function')             loadPrices();
     } catch (e) { console.warn('boot reload:', e && e.message); }
 

@@ -14,6 +14,9 @@ StockMerger es la **app central** (back-office del mayorista). Desde acá se:
 - **Reciben y confirman los pedidos** que arman los vendedores, descontando
   stock.
 - Generan documentos PDF (presupuesto / remito / nota de pedido) y reportes.
+- Lleva la **tesorería** (pestaña 💰 Caja): cajas multi-moneda (Pesos,
+  Dólares, Mercado Pago, Lemon), gastos/impuestos, cuenta corriente de
+  clientes en USD ("dinero en calle") y reportes de comisiones por vendedor.
 
 StockVendedor es la **app de los vendedores** (catálogo + armado de pedidos).
 Vive en su propio repo (`juliobarbol/stockvendedor`).
@@ -30,7 +33,7 @@ Vive en su propio repo (`juliobarbol/stockvendedor`).
 
 ## ⚠️ Trabajar sin quemar tokens — LEER PRIMERO
 
-`index.html` pesa **~513 KB / ~12.700 líneas** (≈125k tokens). **Leerlo entero
+`index.html` pesa **~558 KB / ~13.900 líneas** (≈135k tokens). **Leerlo entero
 gasta un contexto completo de una.** Pero está limpio y modularizado: líneas
 cortas, sin minificados ni base64, banners `// XXX.JS`. Por eso la **lectura
 por rangos de línea es exacta y barata**. Reglas:
@@ -44,7 +47,7 @@ por rangos de línea es exacta y barata**. Reglas:
 4. Para **editar**: `Grep` el `old_string` único → `Read` solo esa franja →
    `Edit`. No vuelvas a leer el archivo después de editar (el harness ya valida
    el cambio).
-5. **CSS (`<style>` 22–2287)** y **HTML/markup (2288–3279)** casi nunca hacen
+5. **CSS (`<style>` 26–2334)** y **HTML/markup (2335–3452)** casi nunca hacen
    falta para lógica de negocio — no los leas salvo trabajo de estilos o
    maquetado.
 6. Contrato compartido con StockVendedor: `Grep` el símbolo en **ambos** repos
@@ -54,11 +57,11 @@ por rangos de línea es exacta y barata**. Reglas:
 
 | Región | Líneas |
 |---|---|
-| `<head>` + scripts CDN | 1–21 |
-| **CSS** (`<style>`) | 22–2287 |
-| **HTML / markup** (body, pestañas) | 2288–3279 |
-| Script de arranque temprano | 3280–3290 |
-| **JS principal** (`<script>`) | 3291–12709 |
+| `<head>` + scripts CDN | 1–25 |
+| **CSS** (`<style>`) | 26–2334 |
+| **HTML / markup** (body, pestañas) | 2335–3452 |
+| Script de arranque temprano | 3453–3463 |
+| **JS principal** (`<script>`) | 3464–13892 |
 
 ### Módulos internos (dentro del JS principal)
 
@@ -66,26 +69,27 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 
 | Módulo | Líneas | Rol |
 |---|---|---|
-| `STORE.JS` | 3291–3456 | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
-| `STATE.JS` | 3457–4071 | Estado global (`state`) + persistencia en localStorage. Incluye `state.clients` (libreta de la central). |
-| `UTILS.JS` | 4072–4198 | Utilidades compartidas (normalización de claves `_key`, hashing, etc.). |
-| `FILES.JS` | 4199–4572 | Carga de Excel de stock + mapper de columnas. |
-| `MERGE.JS` | 4573–5491 | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
-| `UI.JS` | 5492–6262 | Render de stock, navegación, filtros, selector de orden, cards mobile con virtual scroll. |
-| `EXPORT.JS` | 6263–6413 | Exportar Excel / CSV / reportes de alertas (con autofiltro y precios de las 3 listas + China). |
-| `PRICES.JS` | 6414–8156 | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
-| `BACKUP.JS` | 8157–8727 | Exportar/importar TODA la config como JSON (incluye `clients`). Incluye `buildVendorPayload()`. |
-| `BACKUPS.JS` | 8728–8942 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
-| `SUPABASE.JS` | 8943–9437 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos (+ fichas de clientes). |
-| `REALTIME.JS` | 9438–9551 | Supabase Realtime: escucha `orders` nuevos y cambios en `clients`. |
-| `ORDERS.JS` | 9552–10215 | Pedidos recibidos de vendedores (`state.receivedOrders`). |
-| `ORDERS_UI.JS` | 10216–10577 | UI de la pestaña Pedidos (las tarjetas muestran notas/lista de la ficha del cliente). |
-| `CLIENTS.JS` | 10578–10830 | Fichas de clientes de la central (overlay 👥 Clientes) + `pullVendorClients()` (bajada desde la nube). |
-| `DOCS.JS` | 10831–11324 | Generación de PDF (presupuesto / remito / nota de pedido). |
-| `ANALYTICS.JS` | 11325–11652 | Agregaciones de ventas (solo cálculo, sin DOM). |
-| `ANALYTICS_UI.JS` | 11653–12152 | UI de la pestaña Análisis. |
-| `SYNC_ROWS.JS` | 12153–12646 | Sync **fila por fila** entre dispositivos de la central (beta). |
-| `BOOT.JS` | 12647–12708 | Orquesta el arranque sobre IndexedDB. |
+| `STORE.JS` | 3466–3631 | Almacén durable sobre **IndexedDB** con fachada **síncrona** (`Store.get/set`, mismo contrato que localStorage; write-behind). |
+| `STATE.JS` | 3632–4302 | Estado global (`state`) + persistencia en localStorage. Incluye `state.clients` (libreta de la central) y `state.treasury` (caja). |
+| `UTILS.JS` | 4303–4429 | Utilidades compartidas (normalización de claves `_key`, hashing, etc.). |
+| `FILES.JS` | 4430–4803 | Carga de Excel de stock + mapper de columnas. |
+| `MERGE.JS` | 4804–5722 | Ingreso de stock (inicial o nuevo ingreso) + manejo de duplicados. |
+| `UI.JS` | 5723–6682 | Render de stock, navegación, filtros, selector de orden, cards mobile con virtual scroll. |
+| `EXPORT.JS` | 6683–6835 | Exportar Excel / CSV / reportes de alertas (con autofiltro y precios de las 3 listas + China). |
+| `PRICES.JS` | 6836–8578 | Pestaña Precios (modelo v23, 3 listas + multiplicadores por rubro). |
+| `BACKUP.JS` | 8579–9179 | Exportar/importar TODA la config como JSON (incluye `clients` y `treasury`). Incluye `buildVendorPayload()`. |
+| `BACKUPS.JS` | 9180–9394 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
+| `SUPABASE.JS` | 9395–9889 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos (+ fichas de clientes). |
+| `REALTIME.JS` | 9890–10003 | Supabase Realtime: escucha `orders` nuevos y cambios en `clients`. |
+| `ORDERS.JS` | 10004–10671 | Pedidos recibidos de vendedores (`state.receivedOrders`). Al confirmar marca `order.ctaCte` (entra a la cuenta corriente de Caja). |
+| `ORDERS_UI.JS` | 10672–11033 | UI de la pestaña Pedidos (las tarjetas muestran notas/lista de la ficha del cliente). |
+| `CLIENTS.JS` | 11034–11288 | Fichas de clientes de la central (overlay 👥 Clientes, incl. `saldoInicial` USD) + `pullVendorClients()` (bajada desde la nube). |
+| `DOCS.JS` | 11289–11782 | Generación de PDF (presupuesto / remito / nota de pedido). |
+| `ANALYTICS.JS` | 11783–12110 | Agregaciones de ventas (solo cálculo, sin DOM). |
+| `ANALYTICS_UI.JS` | 12111–12610 | UI de la pestaña Análisis. |
+| `SYNC_ROWS.JS` | 12611–13104 | Sync **fila por fila** entre dispositivos de la central (beta). |
+| `CAJA.JS` | 13105–13829 | Pestaña 💰 Caja: cajas multi-moneda (`state.treasury`), cotización del día, cuenta corriente USD por cliente ("dinero en calle", PDF/Excel) y reportes (ventas por lista, comisiones por vendedor, balance mensual). |
+| `BOOT.JS` | 13830–13891 | Orquesta el arranque sobre IndexedDB. |
 
 > Los rangos se mueven al editar. Si algo no cuadra, reubicá con
 > `Grep -n "^// NOMBRE.JS"` y leé el banner.
@@ -93,7 +97,8 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 ### Pestañas de la UI
 
 `Archivos` (carga de stock + backups/nube), `Stock`, `Precios`, `Pedidos`,
-`Análisis`. La pantalla `Memoria` (decisiones de duplicados) no tiene botón
+`Análisis`, `Caja` (tesorería: sub-pestañas 📒 Caja / 💵 Dinero en calle /
+📊 Reportes). La pantalla `Memoria` (decisiones de duplicados) no tiene botón
 en la barra: se abre desde un botón "🧠 Ver memoria" al final de Archivos
 (`switchTab('memoria')` resalta la pestaña Archivos).
 
@@ -205,6 +210,22 @@ Dos canales equivalentes, según haya nube o no:
   Es el orden de los Excel de la central, el orden por defecto del catálogo
   del vendedor y de la plantilla Excel para clientes. Valores no listados van
   después (alfabéticos); sin rubro/marca, al final.
+- **Tesorería / Caja (solo central, pestaña 💰 Caja en StockMerger)**: 4
+  cuentas fijas — Caja Pesos (ARS), Caja Dólares (USD), Mercado Pago (ARS),
+  Lemon (ARS). La **cotización del día** (1 USD = ARS) es un campo editable a
+  mano; cada movimiento guarda la cotización con la que se registró, así los
+  reportes históricos no cambian al actualizarla. Nada de esto viaja a
+  StockVendedor ni a la nube (vive en `state.treasury`, local + backups).
+- **Cuenta corriente de clientes (en USD)**: la deuda nace al CONFIRMAR un
+  pedido (flag `ctaCte` que se setea desde v26 — los confirmados antes se
+  asumen ya cobrados). Los pagos se registran como "cobranza" en Caja (en
+  cualquier cuenta; si es en pesos se convierte a USD con la cotización) y
+  bajan el saldo automáticamente. Deudas previas a la app → campo
+  `saldoInicial` (USD) en la ficha del cliente. El cruce es POR NOMBRE
+  normalizado (`_cliKey`), igual que fichas↔pedidos.
+- **Comisiones por vendedor**: % editable por vendedor (se guarda en
+  `state.treasury.commissions`), aplicado sobre las ventas confirmadas de su
+  cartera en el mes (pestaña Caja → Reportes).
 
 ## Notas de desarrollo
 
