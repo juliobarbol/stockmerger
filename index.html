@@ -156,6 +156,16 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .group-header .group-count{font-size:.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:99px;padding:.15rem .5rem;white-space:nowrap}
 tr.group-row td{background:var(--surface2);font-weight:700;cursor:pointer;user-select:none;border-top:2px solid var(--border)}
 tr.group-row .group-count{font-weight:400;color:var(--muted);font-size:.7rem;margin-left:.5rem}
+
+/* ── Orden del catálogo (botón 📑 + overlay) ── */
+.btn-cat-order{background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.35rem .55rem;font-size:.85rem;cursor:pointer}
+.cat-order-sec{margin-bottom:1.3rem}
+.cat-order-title{font-size:.78rem;font-weight:800;margin-bottom:.45rem;font-family:'Syne',sans-serif;text-transform:uppercase;letter-spacing:.04em}
+.cat-order-row{display:flex;align-items:center;gap:.5rem;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:.4rem .6rem;margin-bottom:.35rem}
+.cat-order-row .pos{font-size:.62rem;color:var(--muted);font-family:'DM Mono',monospace;width:1.6rem;text-align:right}
+.cat-order-row .con{flex:1;font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-order-btn{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);width:36px;height:36px;font-size:.85rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.cat-order-btn:disabled{opacity:.25;cursor:default}
 /* ── Fichas de clientes (overlay 👥 Clientes) ── */
 .clients-toolbar{display:flex;gap:.5rem;margin-bottom:.6rem}
 .clients-toolbar input{flex:1;min-width:0;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.45rem .6rem;font-size:.75rem}
@@ -2515,6 +2525,7 @@ tr.row-lowstock td{background:#f59e0b08}
       <span class="sort-label">Ordenar:</span>
       <select id="sortSelect" onchange="setSortFromSelect(this.value)">
         <option value="">Más stock primero</option>
+        <option value="catalog:1">📑 Orden catálogo</option>
         <option value="qty:1">Menos stock primero</option>
         <option value="product:1">Producto A→Z</option>
         <option value="product:-1">Producto Z→A</option>
@@ -2522,6 +2533,7 @@ tr.row-lowstock td{background:#f59e0b08}
       <select id="groupSelect" onchange="setGroupFromSelect(this.value)">
         <option value="">Sin plegar</option>
       </select>
+      <button class="btn-cat-order" onclick="openCatOrderOverlay()" title="Definir el orden del catálogo">📑</button>
     </div>
     <div class="stats-strip">
       <div class="stat-cell"><div class="num" id="sTotal">—</div><p>productos</p></div>
@@ -2570,6 +2582,25 @@ tr.row-lowstock td{background:#f59e0b08}
   <div class="scroll-body">
     <div class="dec-summary" id="decSummary"></div>
     <div class="dup-list" id="decisionsList"></div>
+  </div>
+</div>
+
+<!-- ══ OVERLAY: ORDEN DEL CATÁLOGO ══ -->
+<div class="overlay" id="overlayCatOrder" style="display:none">
+  <div class="overlay-header">
+    <button class="back-btn" onclick="closeCatOrderOverlay()">← Volver</button>
+    <h1 style="font-size:1rem;font-weight:800;flex:1;text-align:center">ORDEN DEL <span style="color:var(--accent)">CATÁLOGO</span></h1>
+  </div>
+  <div style="padding:.6rem 1rem .2rem">
+    <p style="font-size:.72rem;color:var(--muted);font-family:'DM Mono',monospace;line-height:1.5">
+      Definí con las flechas qué va primero (ej: placas de carga arriba de todo).
+      Este orden se usa al elegir "📑 Orden catálogo", en los Excel exportados y
+      en el catálogo que ven los vendedores. Adentro de cada marca, los modelos
+      salen solos en orden correlativo (A01, A02, A10…).
+    </p>
+  </div>
+  <div class="scroll-body" style="padding:.6rem 1rem 1.2rem">
+    <div id="catOrderLists"></div>
   </div>
 </div>
 
@@ -3542,6 +3573,11 @@ const state = {
   minStock: {},
   dupMemory: {}, // { 'keyA|||keyB': { decision:'merge'|'keep', labelA, labelB } }
 
+  // Orden del catálogo: qué rubros y marcas van primero en la vista
+  // "📑 Orden catálogo", los Excel y el catálogo de los vendedores.
+  // Los valores que no figuran van después, alfabéticos.
+  catalogOrder: { rubros: [], marcas: [] },
+
   // ── Sistema de precios (v23) ──
   // Multiplicadores POR RUBRO — la fuente principal de los cálculos.
   // Estructura: { 'BANDEJA SIM': { l7: 1.30, vip: 1.60 }, ... }
@@ -3667,8 +3703,22 @@ function getDupDecision(kA, kB) {
   return state.dupMemory[dupMemKey(kA, kB)]?.decision || null;
 }
 
+// ── Orden del catálogo ──
+function loadCatalogOrder() {
+  try {
+    const o = JSON.parse(Store.get('catorder') || 'null');
+    state.catalogOrder = (o && typeof o === 'object')
+      ? { rubros: Array.isArray(o.rubros) ? o.rubros : [], marcas: Array.isArray(o.marcas) ? o.marcas : [] }
+      : { rubros: [], marcas: [] };
+  } catch (e) { state.catalogOrder = { rubros: [], marcas: [] }; }
+}
+function saveCatalogOrder() {
+  _safeSetItem('catorder', JSON.stringify(state.catalogOrder), 'el orden del catálogo');
+}
+
 loadMinStock();
 loadDupMemory();
+loadCatalogOrder();
 
 // ── China prices ──
 function loadChinaPrices() {
@@ -5634,7 +5684,9 @@ function applyFilter() {
   if      (state.filter === 'lowstock') data = data.filter(r => stockStatus(r) === 'lowstock');
   else if (state.filter === 'nostock')  data = data.filter(r => stockStatus(r) === 'nostock');
   if (q) data = data.filter(r => fuzzyMatch(r.product, q));
-  if (state.sortCol) {
+  if (state.sortCol === 'catalog') {
+    data.sort(makeCatalogCmp());
+  } else if (state.sortCol) {
     data.sort((a, b) => {
       const va = a[state.sortCol], vb = b[state.sortCol];
       if (typeof va === 'number') return (va - vb) * state.sortDir;
@@ -5696,6 +5748,7 @@ function _syncSortSelect() {
     _sortOptsKey = key;
     let opts =
       '<option value="">Más stock primero</option>' +
+      '<option value="catalog:1">📑 Orden catálogo</option>' +
       '<option value="qty:1">Menos stock primero</option>' +
       '<option value="product:1">Producto A→Z</option>' +
       '<option value="product:-1">Producto Z→A</option>';
@@ -5723,6 +5776,111 @@ function _syncSortSelect() {
     // volvemos a "Sin plegar".
     if (gsel.value !== _stockGroupBy) { _stockGroupBy = ''; gsel.value = ''; }
   }
+}
+
+// ══ ORDEN CATÁLOGO (rubro → marca → modelo correlativo) ══
+// La idea: que la lista se lea como un catálogo armado a mano. Primero los
+// rubros en el orden que definió la central (ej: placas de carga primero),
+// adentro las marcas (ídem), y adentro los modelos en orden correlativo
+// natural (A01 < A01 Core < A02 < A02s < A10 — no alfabético puro, que
+// pondría A10 antes que A2).
+
+// Comparación "correlativa" de textos: los números se comparan como números.
+function cmpModelo(a, b) {
+  return String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' });
+}
+
+// Posición de un valor dentro de un orden definido (case-insensitive).
+// No listado → después de los listados; vacío → al final de todo.
+function _rankIn(map, val) {
+  const k = String(val || '').trim().toLowerCase();
+  if (!k) return 1e9;
+  const i = map.get(k);
+  return i === undefined ? 1e8 : i;
+}
+function _rankMapOf(arr) {
+  const m = new Map();
+  (arr || []).forEach((v, i) => m.set(String(v).trim().toLowerCase(), i));
+  return m;
+}
+
+// Devuelve el comparador para ordenar state.merged como catálogo.
+// extraA = marca, extraA2 = rubro (las columnas extra del Excel de stock).
+function makeCatalogCmp() {
+  const ord = state.catalogOrder || {};
+  const rRank = _rankMapOf(ord.rubros);
+  const mRank = _rankMapOf(ord.marcas);
+  return (a, b) =>
+    (_rankIn(rRank, a.extraA2) - _rankIn(rRank, b.extraA2)) ||
+    cmpModelo(a.extraA2 || '', b.extraA2 || '') ||
+    (_rankIn(mRank, a.extraA) - _rankIn(mRank, b.extraA)) ||
+    cmpModelo(a.extraA || '', b.extraA || '') ||
+    cmpModelo(a.product, b.product);
+}
+
+// ══ OVERLAY ORDEN DEL CATÁLOGO ══
+// Lista los rubros y marcas presentes en el stock y deja reordenarlos con
+// flechas. El orden completo se materializa en state.catalogOrder.
+
+// Valores únicos presentes en el stock para una columna extra, ordenados:
+// primero según el orden guardado, el resto correlativo al final.
+function _catOrderValues(field, savedArr) {
+  const seen = new Map(); // lower → texto original
+  state.merged.forEach(r => {
+    const v = String(r[field] || '').trim();
+    if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v);
+  });
+  const rank = _rankMapOf(savedArr);
+  return [...seen.values()].sort((a, b) =>
+    (_rankIn(rank, a) - _rankIn(rank, b)) || cmpModelo(a, b));
+}
+
+function _catOrderSections() {
+  const secs = [];
+  if (state.colAx2) secs.push({ field: 'extraA2', key: 'rubros', label: state.colAx2 });
+  if (state.colAx)  secs.push({ field: 'extraA',  key: 'marcas', label: state.colAx });
+  return secs;
+}
+
+function renderCatOrderLists() {
+  const box = document.getElementById('catOrderLists');
+  const secs = _catOrderSections();
+  if (!state.merged.length || !secs.length) {
+    box.innerHTML = '<div class="empty-state"><div class="ei">📑</div>' +
+      '<p>Todavía no hay stock cargado con columnas de marca/rubro.</p></div>';
+    return;
+  }
+  box.innerHTML = secs.map(sec => {
+    const vals = _catOrderValues(sec.field, state.catalogOrder[sec.key]);
+    return `<div class="cat-order-sec">
+      <div class="cat-order-title">${escapeHtml(sec.label)} — qué va primero</div>
+      ${vals.map((v, i) => `<div class="cat-order-row">
+        <span class="pos">${i + 1}</span>
+        <span class="con">${escapeHtml(v)}</span>
+        <button class="cat-order-btn" ${i === 0 ? 'disabled' : ''} onclick="catOrderMove('${sec.key}','${sec.field}',${i},-1)">▲</button>
+        <button class="cat-order-btn" ${i === vals.length - 1 ? 'disabled' : ''} onclick="catOrderMove('${sec.key}','${sec.field}',${i},1)">▼</button>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+function catOrderMove(key, field, idx, delta) {
+  const vals = _catOrderValues(field, state.catalogOrder[key]);
+  const j = idx + delta;
+  if (j < 0 || j >= vals.length) return;
+  [vals[idx], vals[j]] = [vals[j], vals[idx]];
+  state.catalogOrder[key] = vals; // se guarda el orden completo materializado
+  saveCatalogOrder();
+  renderCatOrderLists();
+}
+
+function openCatOrderOverlay() {
+  renderCatOrderLists();
+  document.getElementById('overlayCatOrder').style.display = 'flex';
+}
+function closeCatOrderOverlay() {
+  document.getElementById('overlayCatOrder').style.display = 'none';
+  applyFilter(); // por si la vista de Stock está en "📑 Orden catálogo"
 }
 
 // ══ AGRUPAR (pliegues por marca/rubro) ══
@@ -6399,7 +6557,9 @@ function restoreStockOnInit() {
 
 // ══ EXPORT ══
 function buildExportData() {
-  return state.merged.map(r => {
+  // El Excel sale siempre en "orden catálogo" (rubro → marca → modelo
+  // correlativo) para que la lista se lea de corrido, sin productos mezclados.
+  return [...state.merged].sort(makeCatalogCmp()).map(r => {
     const st = stockStatus(r); // usa MIN_STOCK_GLOBAL como fallback
     const minIndividual = state.minStock[r._key];
     const minEfectivo = minIndividual ?? MIN_STOCK_GLOBAL;
@@ -8358,6 +8518,7 @@ function buildBackupPayload(settingsOnly = false) {
     minStock:           state.minStock,
     docConfig:          state.docConfig,
     clients:            state.clients,
+    catalogOrder:       state.catalogOrder,
     // Modelo v23: multiplicadores por rubro + factor distribuidor
     rubrosMultis:       state.rubrosMultis,
     distribuidorFactor: state.distribuidorFactor,
@@ -8529,6 +8690,13 @@ function applyBackupData(backup, opts = {}) {
       }
       if (backup.dupMemory)     { state.dupMemory     = backup.dupMemory;     saveDupMemory(); }
       if (backup.minStock)      { state.minStock      = backup.minStock;      saveMinStock(); }
+      if (backup.catalogOrder && typeof backup.catalogOrder === 'object') {
+        state.catalogOrder = {
+          rubros: Array.isArray(backup.catalogOrder.rubros) ? backup.catalogOrder.rubros : [],
+          marcas: Array.isArray(backup.catalogOrder.marcas) ? backup.catalogOrder.marcas : [],
+        };
+        saveCatalogOrder();
+      }
       if (backup.docConfig)     { state.docConfig     = backup.docConfig;     saveDocConfig(); }
       if (backup.clients && Array.isArray(backup.clients)) {
         state.clients = backup.clients;
@@ -8753,9 +8921,11 @@ function buildVendorPayload() {
     }
   });
 
-  // Stock simplificado para el vendedor (sin info de costos).
+  // Stock simplificado para el vendedor (sin info de costos), en "orden
+  // catálogo" (rubro → marca → modelo correlativo) para que el vendedor y
+  // sus plantillas lean la lista de corrido.
   // Modelo v6+ — solo qty, sin compat dual.
-  const stockSimple = state.merged.map(r => ({
+  const stockSimple = [...state.merged].sort(makeCatalogCmp()).map(r => ({
     _key:    r._key,
     product: r.product,
     qty:     r.qty || 0,
@@ -8778,6 +8948,13 @@ function buildVendorPayload() {
       act:  pricesAct,
       dist: pricesDist,
       vip:  pricesVip,
+    },
+    // Campo ADITIVO (los vendedores viejos lo ignoran): orden del catálogo
+    // definido por la central, para que el vendedor muestre la misma
+    // jerarquía rubro → marca → modelo.
+    order: {
+      rubros: state.catalogOrder?.rubros || [],
+      marcas: state.catalogOrder?.marcas || [],
     },
   };
 
@@ -12777,6 +12954,7 @@ if (document.readyState === 'loading') {
     try {
       if (typeof loadMinStock === 'function')          loadMinStock();
       if (typeof loadDupMemory === 'function')          loadDupMemory();
+      if (typeof loadCatalogOrder === 'function')       loadCatalogOrder();
       if (typeof loadChinaPrices === 'function')        loadChinaPrices();
       if (typeof loadChinaSources === 'function')       loadChinaSources();
       if (typeof loadInferPending === 'function')       loadInferPending();
