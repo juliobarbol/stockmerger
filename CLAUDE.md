@@ -237,6 +237,14 @@ Dos canales equivalentes, según haya nube o no:
   reintento de inserción tras un corte de red devuelva `23505` y NO duplique.
 - Todo lo de Supabase es opt-in: el flujo de archivos Excel/JSON debe seguir
   funcionando aunque no haya nube.
+- **Gran reset** (pasaje de pruebas a uso real): botón al final de la pestaña
+  Archivos (acá) y de Home (vendedor), protegido por la contraseña
+  `opbayresgranreset` (hardcodeada — es un guard anti-toque-accidental, no
+  seguridad). El de la central descarga un backup, borra TODO lo local salvo
+  `sb_config`/`docconfig` y limpia las filas del ns en la nube; `orders` y
+  `catalog` necesitan las policies de DELETE que schema.sql agrega desde esta
+  versión (si el proyecto corre el schema viejo, el reset lo detecta con un
+  count y avisa). El del vendedor borra solo lo local salvo `sb_config`.
 
 ## Deploy y versión del cache (PWA)
 
