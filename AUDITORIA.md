@@ -232,10 +232,10 @@ primero lo que puede causar pérdida de plata o de datos.
 
 ### ⏳ Pendiente (requiere acción manual o decisión de producto)
 
-1. **C1 RLS real por `ns`** — el más importante. Requiere Supabase Auth y
-   cambios en el dashboard. El plan está al final de `schema.sql`. Hasta
-   entonces, las policies siguen abiertas (riesgo conocido y aceptado como
-   arranque).
+1. **C1 RLS real por `ns`** — el más importante. **El plan de ejecución
+   completo está en `PLAN-ACCESOS.md`** (anotado 2026-06-12 a pedido de
+   Julio, listo para una sesión futura). Hasta entonces, las policies siguen
+   abiertas (riesgo conocido y aceptado como arranque).
 2. ~~**A5 pineo de CDN + SRI**~~ — **RESUELTO (verificado 2026-06-12)**: los
    `<script>` de ambas apps ya están pineados a versiones exactas con
    `integrity` + `crossorigin` (supabase-js 2.108.1, xlsx 0.18.5, jspdf 2.5.1).
