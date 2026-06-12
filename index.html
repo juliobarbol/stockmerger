@@ -2487,12 +2487,26 @@ tr.row-lowstock td{background:#f59e0b08}
         Si no hay internet, seguí usando el botón de arriba.
       </p>
       <div class="sb-config">
-        <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
-        <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
-        <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
-        <div class="sb-btn-row">
-          <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
-          <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+        <!-- Candado anti-miradas: con la nube ya conectada, las claves quedan
+             ocultas detrás de una contraseña (sbLockRefresh, SUPABASE.JS). -->
+        <div id="sbLockBox" style="display:none">
+          <p style="font-size:.7rem;color:var(--muted);margin:0 0 .45rem">
+            ✅ Conectado a la nube — tienda «<span id="sbLockNs"></span>» ·
+            clave guardada (termina en <span id="sbLockTail"></span>)
+          </p>
+          <button class="btn-backup" onclick="sbUnlockConfig()" style="width:100%;padding:.5rem;justify-content:center">
+            🔒 Ver / editar conexión
+          </button>
+        </div>
+        <div id="sbConfigBox" style="display:flex;flex-direction:column;gap:.4rem">
+          <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
+          <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
+          <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
+          <div class="sb-btn-row">
+            <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
+            <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+            <button class="btn-backup" id="sbHideBtn" onclick="sbHideConfig()" style="display:none">🔒 Ocultar</button>
+          </div>
         </div>
         <button class="btn-backup btn-backup-primary" onclick="publishCatalog()" style="width:100%;padding:.6rem;justify-content:center">
           ☁️⬆ Publicar catálogo a la nube
@@ -9715,7 +9729,49 @@ function scSaveConfigFromUI() {
   scSaveConfig({ url, anonKey, ns });
   scStatus('Configuración guardada ✓', 'ok');
   toast('Configuración de nube guardada ✓', 'ok');
+  _sbCfgUnlocked = false;   // recién guardada → vuelve a quedar oculta
+  sbLockRefresh();
   if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+}
+
+// ── Candado anti-miradas de la config de nube ──
+// Con la nube ya conectada, la sección de URL/key/tienda se reemplaza por un
+// resumen y solo se abre con contraseña. Igual que la del gran reset, es un
+// guard contra miradas ajenas en la pantalla, NO seguridad real (el código
+// es público); la protección de fondo son las policies de la base.
+const SB_CFG_PASS = 'opbayressincnube';
+let _sbCfgUnlocked = false;
+
+function sbLockRefresh() {
+  const lock = document.getElementById('sbLockBox');
+  const box  = document.getElementById('sbConfigBox');
+  if (!lock || !box) return;
+  const c = scGetConfig();
+  const hasCfg = !!(c.url && c.anonKey);
+  const locked = hasCfg && !_sbCfgUnlocked;
+  lock.style.display = locked ? '' : 'none';
+  box.style.display  = locked ? 'none' : 'flex';
+  const hideBtn = document.getElementById('sbHideBtn');
+  if (hideBtn) hideBtn.style.display = (!locked && hasCfg) ? '' : 'none';
+  if (locked) {
+    const ns   = document.getElementById('sbLockNs');
+    const tail = document.getElementById('sbLockTail');
+    if (ns)   ns.textContent   = c.ns || 'default';
+    if (tail) tail.textContent = '…' + c.anonKey.slice(-4);
+  }
+}
+
+function sbUnlockConfig() {
+  const pass = prompt('Contraseña para ver/editar la conexión:');
+  if (pass === null) return;
+  if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
+  _sbCfgUnlocked = true;
+  sbLockRefresh();
+}
+
+function sbHideConfig() {
+  _sbCfgUnlocked = false;
+  sbLockRefresh();
 }
 
 // ── Probar conexión ──
@@ -10048,6 +10104,7 @@ function scInitUI() {
   if (u) u.value = c.url;
   if (k) k.value = c.anonKey;
   if (n) n.value = c.ns;
+  sbLockRefresh();
 
   if (!scLibReady()) {
     scStatus('Modo offline: la nube no cargó. La app funciona igual; usá archivos.', '');

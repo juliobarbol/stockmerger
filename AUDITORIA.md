@@ -236,10 +236,11 @@ primero lo que puede causar pérdida de plata o de datos.
    cambios en el dashboard. El plan está al final de `schema.sql`. Hasta
    entonces, las policies siguen abiertas (riesgo conocido y aceptado como
    arranque).
-2. **A5 pineo de CDN + SRI** — este entorno no tiene salida de red a jsdelivr
-   para resolver la versión exacta ni computar los hashes; pinear a ciegas
-   rompería la app. Hay un TODO con instrucciones junto a los `<script>` de
-   ambos `index.html`. Alternativa superior: vendorear las libs al repo.
+2. ~~**A5 pineo de CDN + SRI**~~ — **RESUELTO (verificado 2026-06-12)**: los
+   `<script>` de ambas apps ya están pineados a versiones exactas con
+   `integrity` + `crossorigin` (supabase-js 2.108.1, xlsx 0.18.5, jspdf 2.5.1).
+   Vendorear las libs al repo queda como mejora opcional, ya sin urgencia de
+   seguridad.
 3. **A4 precio obsoleto en pedido en curso** — mitigado de fábrica (el modo
    auto no pisa un pedido en curso); el snapshot `_priceSyncedAt` +
    revalidación queda como mejora de producto.
