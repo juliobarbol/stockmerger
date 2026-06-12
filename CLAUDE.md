@@ -235,6 +235,10 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
+- **PENDIENTE ACORDADO CON JULIO (2026-06-12): acceso por persona a la nube**
+  (Supabase Auth + RLS por `ns`, hallazgo C1 de `AUDITORIA.md`). El plan de
+  ejecución completo vive en **`PLAN-ACCESOS.md`** — leerlo antes de
+  encararlo y coordinar el corte con Julio (los vendedores deben loguearse).
 - No hay tests ni linters; es HTML+JS plano servido estático.
 - **Acceso directo a Supabase**: si la variable de entorno
   `SUPABASE_ACCESS_TOKEN` está definida, usarla con la Management API
