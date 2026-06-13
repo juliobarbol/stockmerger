@@ -156,12 +156,15 @@ consultan ese rol con el helper `store_role(ns)`; sin sesión iniciada
   `GRAN_RESET_KEEP`, junto a `sb_config`/`docconfig`, para no desloguear.
 - **Alta/baja de personas**: crear/borrar el usuario en Supabase Auth (Admin
   API / Management API con `SUPABASE_ACCESS_TOKEN`) y su fila en `user_stores`
-  (`role` = `central`/`vendor`). El `ON DELETE CASCADE` borra la membresía al
+  (`role` = `central`/`vendor`). En el alta, además guardar la **identidad fija**
+  del vendedor en `app_metadata` (`vendor_name` + `vendor_code`): la app del
+  vendedor la autocompleta y bloquea (no se escribe el nombre/código a mano, así
+  no se duplican vendedores). El `ON DELETE CASCADE` borra la membresía al
   borrar el usuario → el teléfono queda sin acceso al instante. Detalle y SQL
   de ejemplo en `schema.sql` (sección AUTH + RLS).
-- **Usuarios actuales** (ns `default`): Julio Barrientos, Shirley Celis,
-  Santiago Encalada (central); Walter Méndez, Sergio Achaval, Jairo Leguizamón
-  (vendor).
+- **Usuarios actuales** (ns `default`, con código corto): Julio Barrientos
+  (JUL), Shirley Celis (SHI), Santiago Encalada (SAN) — central; Walter Méndez
+  (WAL), Sergio Achaval (SER), Jairo Leguizamón (JAI) — vendor.
 
 ### Tablas que toca StockMerger
 
