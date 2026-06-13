@@ -125,6 +125,35 @@ mismo espíritu que el gran reset — no es seguridad real). El campo de la key
 es `type="password"` y el resumen solo muestra las últimas 4. Igual en el
 vendedor (Home). Ver `sbLockRefresh()` en SUPABASE.JS de ambos repos.
 
+### Acceso por persona (Supabase Auth + RLS) — HECHO (2026-06-13)
+
+La anon key **ya NO abre la base por sí sola**: hay RLS real por rol. Cada
+persona tiene un usuario de Supabase Auth (email + contraseña) y un rol por
+tienda (`central` / `vendor`) en la tabla `user_stores`. Las policies
+consultan ese rol con el helper `store_role(ns)`; sin sesión iniciada
+(`auth.uid()` null) no se ve ni se toca nada.
+
+- **Login en la UI**: dentro del candado de la sección de conexión hay un
+  formulario email + contraseña (`sbLogin()` → `signInWithPassword`). Si hay
+  sesión, muestra el email y un botón "Cerrar sesión" (`sbLogout()`). El estado
+  lo refresca `sbLockRefresh()` con `_sbGetSession()`. La sesión persiste sola
+  en `localStorage` (`sb-<ref>-auth-token`) — compatible con el modo offline.
+- **Roles**: `central` puede TODO lo de su `ns` (publicar catálogo, leer/borrar
+  pedidos, tablas de sync, backups). `vendor` solo LEE `catalog` e INSERTA en
+  `orders`/`clients`. Las tablas solo-central (`catalog_items`,
+  `rubro_multipliers`, `settings`, `received_orders`, `backups`) y el bucket
+  `backups` de Storage son inaccesibles para vendedores.
+- **Gran reset**: conserva la clave de sesión (`sb-<ref>-auth-token`) en
+  `GRAN_RESET_KEEP`, junto a `sb_config`/`docconfig`, para no desloguear.
+- **Alta/baja de personas**: crear/borrar el usuario en Supabase Auth (Admin
+  API / Management API con `SUPABASE_ACCESS_TOKEN`) y su fila en `user_stores`
+  (`role` = `central`/`vendor`). El `ON DELETE CASCADE` borra la membresía al
+  borrar el usuario → el teléfono queda sin acceso al instante. Detalle y SQL
+  de ejemplo en `schema.sql` (sección AUTH + RLS).
+- **Usuarios actuales** (ns `default`): Julio Barrientos, Shirley Celis,
+  Santiago Encalada (central); Walter Méndez, Sergio Achaval, Jairo Leguizamón
+  (vendor).
+
 ### Tablas que toca StockMerger
 
 | Tabla | Uso desde el merger |
@@ -235,10 +264,10 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
-- **PENDIENTE ACORDADO CON JULIO (2026-06-12): acceso por persona a la nube**
-  (Supabase Auth + RLS por `ns`, hallazgo C1 de `AUDITORIA.md`). El plan de
-  ejecución completo vive en **`PLAN-ACCESOS.md`** — leerlo antes de
-  encararlo y coordinar el corte con Julio (los vendedores deben loguearse).
+- **HECHO (2026-06-13): acceso por persona a la nube** (Supabase Auth + RLS por
+  rol, hallazgo C1 de `AUDITORIA.md`). Ver la sección "Acceso por persona" en
+  "Conexión con la nube" (arriba) y `schema.sql`. Alta/baja de personas: crear/
+  borrar el usuario en Auth + su fila en `user_stores`.
 - No hay tests ni linters; es HTML+JS plano servido estático.
 - **Acceso directo a Supabase**: si la variable de entorno
   `SUPABASE_ACCESS_TOKEN` está definida, usarla con la Management API

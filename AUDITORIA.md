@@ -44,7 +44,7 @@ Los problemas reales se concentran en **4 frentes**:
 
 | # | Dónde | Hallazgo |
 |---|---|---|
-| C1 | Supabase (ambas apps) | **RLS abierta**: policies `using (true)` (comentario en merger ~8734). Todos los `.eq('ns', …)` / `.eq('id', ns)` son filtros cliente. Con la anon key (pública por diseño en cada vendedor) se puede leer/escribir `catalog`, `orders`, `backups`, etc. de cualquier `ns`. **Fix**: políticas RLS reales por `ns` (con Supabase Auth o claims), o al menos separar proyecto/keys por tienda y documentar rotación. |
+| C1 | ~~Supabase (ambas apps)~~ | ✅ **RESUELTO (2026-06-13)**: implementado acceso por persona con Supabase Auth + RLS real por rol. Cada usuario tiene email/contraseña y un rol (`central`/`vendor`) en la tabla `user_stores`; las policies consultan ese rol con el helper `store_role()`. Sin sesión iniciada la anon key ya no abre la base. Verificado por rol (anon no ve nada; vendedor solo lee catálogo e inserta pedidos; central ve todo). Ver `schema.sql` (sección AUTH + RLS) y la sección "Conexión con la nube" de los CLAUDE.md. |
 | C2 | merger `UI.JS` ~5537; vendedor `UI.JS` 3927, 4073 | **XSS en `onclick`**: patrón `safeKey = s._key.replace(/'/g, "\\'")` interpolado en `onclick="fn('${safeKey}')"`. Una clave tipo `x\');alert(1);//` rompe el string (el escape de comilla simple no cubre backslash ni contexto HTML). Los datos vienen de la nube (catálogo/pedidos) → ejecutable en todos los dispositivos. **Fix**: eliminar onclick inline → `data-key` + event delegation, o escapar para contexto HTML+JS completo. |
 | C3 | merger `ORDERS.JS` 9647–9780 | **Confirmación de pedido no atómica**: el guard `status === 'confirmado'` es solo en memoria del tab. Dos pestañas con el mismo pedido pendiente pueden descontar stock dos veces; y si `saveMerged()` falla (cuota), el pedido queda `confirmado` sin que el descuento persista. **Fix**: lock cross-tab (BroadcastChannel/StorageEvent), y marcar `confirmado` solo después de que ambos saves se completen (patrón snapshot → descuento → marca). |
 | C4 | merger `STORE.JS` 3329–3343; vendedor global | **Sin `beforeunload`**: el flush de IndexedDB es debounced 300 ms y `flushNow()` solo corre en `visibilitychange`/`online`; las promesas de `flushNow()` ni se esperan. Cerrar la pestaña justo después de confirmar/enviar puede perder la escritura. **Fix**: `window.addEventListener('beforeunload', () => Store.flushNow())` en merger; flush de `saveOrders()`/`saveCurrentOrder()` en vendedor. |
@@ -111,9 +111,10 @@ primero lo que puede causar pérdida de plata o de datos.
       armar pedido → enviar → importar → confirmar → verificar descuento.
 
 ### Fase 1 — Seguridad (1–2 días)
-- [ ] **C1**: diseñar e implementar RLS real por `ns` (mínimo viable:
-      Supabase Auth anónima + claim de tienda, o un proyecto/clave por
-      tienda). Documentar rotación de anon key.
+- [x] **C1** ✅ (2026-06-13): RLS real por rol con Supabase Auth + tabla
+      `user_stores` + helper `store_role()`. Login por persona en ambas apps.
+      Pendiente opcional: rotar la anon key (con RLS estricta ya no sirve sola,
+      pero rotarla limpia el legado; obliga a re-pegar la key en cada teléfono).
 - [ ] **C2**: barrer todos los `onclick="...('${...}')"` de ambas apps y
       migrar a `data-*` + event delegation (grep: `onclick=\"` con template
       literal).
@@ -232,10 +233,10 @@ primero lo que puede causar pérdida de plata o de datos.
 
 ### ⏳ Pendiente (requiere acción manual o decisión de producto)
 
-1. **C1 RLS real por `ns`** — el más importante. **El plan de ejecución
-   completo está en `PLAN-ACCESOS.md`** (anotado 2026-06-12 a pedido de
-   Julio, listo para una sesión futura). Hasta entonces, las policies siguen
-   abiertas (riesgo conocido y aceptado como arranque).
+1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
+   persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
+   Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
+   Opcional pendiente: rotar la anon key (limpieza de legado).
 2. ~~**A5 pineo de CDN + SRI**~~ — **RESUELTO (verificado 2026-06-12)**: los
    `<script>` de ambas apps ya están pineados a versiones exactas con
    `integrity` + `crossorigin` (supabase-js 2.108.1, xlsx 0.18.5, jspdf 2.5.1).

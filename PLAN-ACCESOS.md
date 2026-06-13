@@ -1,13 +1,27 @@
 # PLAN-ACCESOS.md — Acceso por persona a la nube (RLS real)
 
-> **Estado: PENDIENTE — listo para ejecutar en una sesión futura.**
-> Anotado el 2026-06-12 a pedido de Julio. Resuelve el hallazgo **C1** de
-> `AUDITORIA.md` (policies abiertas). Leer entero antes de tocar nada.
+> **Estado: ✅ HECHO (2026-06-13).** Implementado en una sola tanda (no hubo
+> ventana de uso real, así que el corte se hizo directo). Resuelve el hallazgo
+> **C1** de `AUDITORIA.md`. Este archivo queda como registro histórico; la
+> documentación viva está en `schema.sql` (sección AUTH + RLS) y en la sección
+> "Acceso por persona" de los CLAUDE.md de ambos repos.
 >
-> Idea en una frase: hoy la anon key (que viaja en el teléfono de cada
-> vendedor) abre TODA la base; el plan es que cada teléfono tenga su propio
-> usuario y contraseña, y que la base solo le permita hacer lo que le
-> corresponde a su rol. Una clave robada deja de servir para todo.
+> **Qué quedó implementado:**
+> - Tabla `user_stores` (user_id, ns, role, vendor) + helper `store_role()`.
+> - 6 usuarios de Auth: Julio Barrientos, Shirley Celis, Santiago Encalada
+>   (central); Walter Méndez, Sergio Achaval, Jairo Leguizamón (vendor).
+> - Policies estrictas por rol en todas las tablas + bucket `backups` de
+>   Storage. La tabla legacy `workspace` quedó cerrada (sin policies).
+> - Login email + contraseña en la sección de conexión de ambas apps; la
+>   sesión se conserva en el gran reset.
+> - Verificado por rol: anon no ve nada; vendedor solo lee catálogo e inserta
+>   pedidos; central ve/escribe todo.
+> - **Pendiente opcional**: rotar la anon key (con RLS estricta ya no sirve
+>   sola; rotarla obliga a re-pegar la key nueva en todos los teléfonos).
+>
+> Idea en una frase: antes la anon key (que viaja en el teléfono de cada
+> vendedor) abría TODA la base; ahora cada teléfono tiene su propio usuario y
+> contraseña, y la base solo le permite hacer lo que le corresponde a su rol.
 
 ## 0. Contexto técnico (verificado 2026-06-12)
 
