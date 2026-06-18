@@ -10495,6 +10495,14 @@ function _unmarkProcessing(localId) {
 // Devuelve { status, order?, warnings? } donde status ∈
 //   'imported' | 'replaced' | 'duplicate' | 'cancelled' | 'empty' | 'no_stock'
 // ════════════════════════════════════════════════════════════════════
+// Topes "anti-absurdo" de un pedido recibido. Espejan los del vendedor
+// (StockVendedor, addToOrder/updateOrderItem). Acá son DEFENSA EN PROFUNDIDAD:
+// un Excel roto o un payload manipulado no debe entrar crudo al descuento de
+// stock. Cantidades fuera de rango se recortan (con aviso); ítems de más se
+// descartan (con aviso). No reemplaza al clamp por stock que hace confirmar.
+const MAX_QTY_PER_LINE    = 100000; // unidades por producto
+const MAX_ITEMS_PER_ORDER = 3000;   // productos distintos por pedido
+
 function ingestVendorOrder(src, opts = {}) {
   const askConfirm = opts.askConfirm !== false;
   const extraWarnings = Array.isArray(opts.extraWarnings) ? opts.extraWarnings : [];
@@ -10513,11 +10521,19 @@ function ingestVendorOrder(src, opts = {}) {
   // del origen) para que Excel y nube se comporten idéntico.
   const items = [];
   const warnings = [];
+  let truncatedItems = false;
   src.items.forEach(raw => {
     const product = String(raw.label || '').trim();
     if (!product) return;
-    const qty = Math.round(parseFloat(raw.qty) || 0);
+    // Tope de ítems distintos: descartar el resto (defensa en profundidad).
+    if (items.length >= MAX_ITEMS_PER_ORDER) { truncatedItems = true; return; }
+    let qty = Math.round(parseFloat(raw.qty) || 0);
     if (qty <= 0) return;
+    // Clampear cantidades fuera de rango (Excel roto / payload manipulado).
+    if (qty > MAX_QTY_PER_LINE) {
+      warnings.push(`"${product}" — cantidad ${qty} fuera de rango, recortada a ${MAX_QTY_PER_LINE}`);
+      qty = MAX_QTY_PER_LINE;
+    }
 
     const key = raw.key || normalize(product);
     const price = parseFloat(raw.price) || 0;
@@ -10548,6 +10564,9 @@ function ingestVendorOrder(src, opts = {}) {
   if (!items.length) {
     if (!opts.silent) toast('El pedido no contiene items válidos.', 'err');
     return { status: 'empty' };
+  }
+  if (truncatedItems) {
+    warnings.push(`El pedido traía más de ${MAX_ITEMS_PER_ORDER} productos: se procesaron los primeros ${MAX_ITEMS_PER_ORDER}`);
   }
 
   // Total a partir de los subtotales (más confiable que el total declarado)
