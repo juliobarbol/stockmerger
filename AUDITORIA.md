@@ -244,6 +244,12 @@ primero lo que puede causar pérdida de plata o de datos.
    funcionando). `schema.sql` actualizado en ambos repos para que no se
    re-desincronice. Verificado en vivo: RLS=true, grants vacíos, helper ve las
    6 filas.
+0b. ~~**Tabla legacy `workspace`**~~ — ✅ **RESUELTO (2026-06-18)**: era el
+   mecanismo viejo de "central compartida" (blob de estado completo),
+   reemplazado por `SYNC_ROWS.JS` (sync fila-por-fila). Ya no la usa ninguna
+   query del código (solo quedaban comentarios históricos). Se respaldó la
+   única fila (rev 107, 30-may) y se hizo `drop table workspace`. Verificado:
+   ya no existe.
 1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
    persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
    Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
