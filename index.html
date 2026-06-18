@@ -6171,6 +6171,12 @@ function buildCardHTML(r) {
   if (state.colAx2 && r.extraA2 !== '') extras += `<div class="card-extra">📦 ${escapeHtml(state.colAx2)}: ${escapeHtml(r.extraA2)}</div>`;
   const minVal = state.minStock[r._key] ?? '';
   const safeKey = escJsAttr(r._key);
+  // Reposición: cuántas unidades comprar para volver al mínimo de alerta.
+  const minEf = state.minStock[r._key] ?? MIN_STOCK_GLOBAL;
+  const reponer = (st !== 'ok') ? Math.max(0, minEf - (r.total ?? r.qty ?? 0)) : 0;
+  const repoLine = reponer > 0
+    ? `<div class="card-repo" style="margin-top:.35rem;font-size:.7rem;font-weight:700;color:var(--warn)">🛒 Comprar <b>${fmt(reponer)}</b> para llegar al mínimo</div>`
+    : '';
   return `<div class="${cardCls}">
     <div class="card-top">
       <div class="card-product">${escapeHtml(r.product)}</div>
@@ -6179,6 +6185,7 @@ function buildCardHTML(r) {
     <div class="card-nums card-nums-single">
       <div class="num-block nb-t"><div class="val">${r.qty > 0 ? fmt(r.qty) : '—'}</div><div class="lbl">📦 Stock</div></div>
     </div>
+    ${repoLine}
     ${extras}
     <div class="card-min-row">
       <span class="card-min-label">Mínimo de alerta <span style="color:var(--muted);font-size:.58rem">(def. ${MIN_STOCK_GLOBAL})</span>:</span>
@@ -6814,6 +6821,7 @@ function buildAlertData() {
         'Stock':         r.qty,
         'Estado':        st === 'nostock' ? '❌ SIN STOCK' : '⚠️ BAJO',
         'Mínimo alerta': minEfectivo,
+        'Reponer (uds.)': Math.max(0, minEfectivo - (r.total ?? r.qty ?? 0)),
         ...(state.colAx  ? { [state.colAx]:  r.extraA  } : {}),
         ...(state.colAx2 ? { [state.colAx2]: r.extraA2 } : {}),
       };
@@ -6841,7 +6849,7 @@ function exportExcel() {
   if (alertData.length) {
     const wsAlert = XLSX.utils.json_to_sheet(alertData);
     wsAlert['!cols'] = [
-      { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
+      { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 }, { wch: 14 },
     ];
     wsAlert['!autofilter'] = { ref: wsAlert['!ref'] };
     XLSX.utils.book_append_sheet(wb, wsAlert, '⚠️ Alertas');
@@ -6864,7 +6872,7 @@ function exportAlerts() {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(alertData);
   ws['!cols'] = [
-    { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
+    { wch: 42 }, { wch: 13 }, { wch: 14 }, { wch: 13 }, { wch: 14 },
   ];
   ws['!autofilter'] = { ref: ws['!ref'] };
   XLSX.utils.book_append_sheet(wb, ws, '⚠️ Alertas');
@@ -13794,6 +13802,75 @@ function _clientStatementRows(name) {
   return rows;
 }
 
+// ── Antigüedad de la deuda de UN cliente (aging) ──
+// Reparte el saldo pendiente en tramos según hace cuánto se generó cada cargo:
+//   0–30 / 31–60 / 61–90 / +90 días. Los pagos se aplican a los cargos MÁS
+//   VIEJOS primero (FIFO), que es el criterio contable habitual. El saldo
+//   inicial de la ficha (deuda previa, sin fecha) se considera el más viejo.
+function _clientAging(name) {
+  const k = _cliKey(name);
+  const charges = [];
+  const ficha = (state.clients || []).find(c => _cliKey(c.name) === k);
+  const ini = ficha ? (parseFloat(ficha.saldoInicial) || 0) : 0;
+  if (ini > 0) charges.push({ date: null, amount: ini });   // deuda previa = la más vieja
+  (state.receivedOrders || []).forEach(o => {
+    if (o.status !== 'confirmado' || !o.ctaCte) return;
+    if (_cliKey(o.client) !== k) return;
+    charges.push({ date: String(_saleDate(o) || '').slice(0, 10) || null, amount: o.total || 0 });
+  });
+  // Más viejo primero (sin fecha = el más viejo de todos).
+  charges.sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return -1;
+    if (!b.date) return 1;
+    return a.date.localeCompare(b.date);
+  });
+  // Pagos totales del cliente, aplicados a los cargos más viejos primero.
+  let pagos = 0;
+  (state.treasury.movements || []).forEach(m => {
+    if (m.category === 'cobranza' && _cliKey(m.client) === k) pagos += m.usd || 0;
+  });
+  charges.forEach(c => {
+    if (pagos <= 0) return;
+    const ap = Math.min(pagos, c.amount);
+    c.amount -= ap; pagos -= ap;
+  });
+  // Bucketizar lo que quedó sin pagar.
+  const out = { b0: 0, b1: 0, b2: 0, b3: 0, total: 0, oldestDays: null };
+  const today = new Date();
+  charges.forEach(c => {
+    if (c.amount <= 0.009) return;
+    let days;
+    if (!c.date) days = 99999;                                // sin fecha = previo
+    else {
+      days = Math.floor((today - new Date(c.date + 'T00:00:00')) / 86400000);
+      if (days < 0) days = 0;
+    }
+    if      (days <= 30) out.b0 += c.amount;
+    else if (days <= 60) out.b1 += c.amount;
+    else if (days <= 90) out.b2 += c.amount;
+    else                 out.b3 += c.amount;
+    if (out.oldestDays == null || days > out.oldestDays) out.oldestDays = days;
+  });
+  out.total = Math.round((out.b0 + out.b1 + out.b2 + out.b3) * 100) / 100;
+  return out;
+}
+
+// Etiqueta corta para mostrar la antigüedad del cargo más viejo impago.
+function _agingLabel(days) {
+  if (days == null) return '';
+  if (days >= 99999) return 'previo';
+  return `${days} d`;
+}
+// Color según el tramo (verde al día → rojo +90).
+function _agingColor(days) {
+  if (days == null) return 'var(--muted)';
+  if (days <= 30) return 'var(--muted)';
+  if (days <= 60) return 'var(--text)';
+  if (days <= 90) return 'var(--warn)';
+  return 'var(--red)';
+}
+
 // ── Resumen de cuenta corriente individual (PDF para enviar al cliente) ──
 function exportClientStatement(name) {
   const debts = computeClientDebts();
@@ -13861,6 +13938,18 @@ function exportClientStatement(name) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(`≈ $ ${_fmtN(entry.saldo * state.treasury.rate)} (1 USD = $ ${_fmtN(state.treasury.rate)})`, 210 - MARG_X, yEnd, { align: 'right' });
   }
+  // Antigüedad de la deuda: cuánto está al día y cuánto atrasado.
+  if (entry.saldo > 0.009) {
+    const ag = _clientAging(entry.name);
+    if (ag.total > 0.009) {
+      yEnd += 9;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+      doc.text('Antigüedad de la deuda:', MARG_X, yEnd);
+      doc.setFont('helvetica', 'normal');
+      yEnd += 4.8;
+      doc.text(`0-30 dias: USD ${_fmtN(ag.b0)}    31-60: USD ${_fmtN(ag.b1)}    61-90: USD ${_fmtN(ag.b2)}    +90: USD ${_fmtN(ag.b3)}`, MARG_X, yEnd);
+    }
+  }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
   doc.text('Generado por StockMerger', 105, 290, { align: 'center' });
 
@@ -13873,20 +13962,25 @@ function exportClientStatement(name) {
 function exportDineroEnCalle() {
   const debts = computeClientDebts().filter(e => Math.abs(e.saldo) >= 0.01);
   if (!debts.length) { toast('No hay deudas registradas para exportar.', 'err'); return; }
-  const rows = [['Cliente', 'Vendedor', 'Lista', 'Deuda USD']];
+  const rows = [['Cliente', 'Vendedor', 'Lista', 'Deuda USD', '0-30 d', '31-60 d', '61-90 d', '+90 d', 'Más vieja (días)']];
   let total = 0;
+  const bt = { b0: 0, b1: 0, b2: 0, b3: 0 };
+  const r2 = n => Math.round(n * 100) / 100;
   debts.forEach(e => {
     total += e.saldo;
-    rows.push([e.name, e.vendor || '', _listName(e.list), Math.round(e.saldo * 100) / 100]);
+    const ag = e.saldo > 0.009 ? _clientAging(e.name) : { b0: 0, b1: 0, b2: 0, b3: 0, oldestDays: null };
+    bt.b0 += ag.b0; bt.b1 += ag.b1; bt.b2 += ag.b2; bt.b3 += ag.b3;
+    const oldest = ag.oldestDays == null ? '' : (ag.oldestDays >= 99999 ? 'previo' : ag.oldestDays);
+    rows.push([e.name, e.vendor || '', _listName(e.list), r2(e.saldo), r2(ag.b0), r2(ag.b1), r2(ag.b2), r2(ag.b3), oldest]);
   });
   rows.push([]);
-  rows.push(['TOTAL DINERO EN CALLE', '', '', Math.round(total * 100) / 100]);
+  rows.push(['TOTAL DINERO EN CALLE', '', '', r2(total), r2(bt.b0), r2(bt.b1), r2(bt.b2), r2(bt.b3), '']);
   if (state.treasury.rate > 0) {
-    rows.push(['Equivalente en pesos (1 USD = $ ' + _fmtN(state.treasury.rate) + ')', '', '', Math.round(total * state.treasury.rate * 100) / 100]);
+    rows.push(['Equivalente en pesos (1 USD = $ ' + _fmtN(state.treasury.rate) + ')', '', '', r2(total * state.treasury.rate)]);
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{ wch: 34 }, { wch: 18 }, { wch: 14 }, { wch: 14 }];
-  ws['!autofilter'] = { ref: `A1:D${debts.length + 1}` };
+  ws['!cols'] = [{ wch: 34 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 16 }];
+  ws['!autofilter'] = { ref: `A1:I${debts.length + 1}` };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Dinero en calle');
   XLSX.writeFile(wb, `Dinero_en_calle_${_cajaToday()}.xlsx`);
@@ -14079,16 +14173,20 @@ function _renderCajaCalle() {
     return html;
   }
   let total = 0;
-  html += `<table class="caja-table"><thead><tr>
-    <th>Cliente</th><th>Vendedor</th><th>Lista</th>
-    <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
-  </tr></thead><tbody>`;
+  const agTot = { b0: 0, b1: 0, b2: 0, b3: 0 };
+  let rowsHtml = '';
   debts.forEach(e => {
     total += e.saldo;
     const cls = e.saldo > 0.009 ? 'caja-neg' : e.saldo < -0.009 ? 'caja-pos' : 'caja-muted';
     const cargosTot = e.saldoInicial + e.cargos;
-    html += `<tr>
-      <td>${escHtml(e.name)}</td>
+    // Antigüedad: solo para quien debe (saldo > 0).
+    const ag = e.saldo > 0.009 ? _clientAging(e.name) : null;
+    if (ag) { agTot.b0 += ag.b0; agTot.b1 += ag.b1; agTot.b2 += ag.b2; agTot.b3 += ag.b3; }
+    const ageLine = (ag && ag.oldestDays != null)
+      ? `<div style="font-size:.62rem;font-weight:700;color:${_agingColor(ag.oldestDays)}">🕒 ${_agingLabel(ag.oldestDays)}</div>`
+      : '';
+    rowsHtml += `<tr>
+      <td>${escHtml(e.name)}${ageLine}</td>
       <td>${escHtml(e.vendor || '—')}</td>
       <td>${e.hasFicha ? _listName(e.list) : '—'}</td>
       <td class="num">${_fmtN(cargosTot)}</td>
@@ -14100,6 +14198,20 @@ function _renderCajaCalle() {
       </td>
     </tr>`;
   });
+  // Resumen por antigüedad (cuánto de la deuda total está al día y cuánto atrasado).
+  if (agTot.b0 + agTot.b1 + agTot.b2 + agTot.b3 > 0.009) {
+    html += `<div class="caja-cards" style="margin-bottom:.8rem">
+      <div class="caja-card"><div class="cc-name">🕒 Al día (0–30 d)</div><div class="cc-val">USD ${_fmtN(agTot.b0)}</div></div>
+      <div class="caja-card"><div class="cc-name">31–60 días</div><div class="cc-val">USD ${_fmtN(agTot.b1)}</div></div>
+      <div class="caja-card"><div class="cc-name">61–90 días</div><div class="cc-val" style="color:var(--warn)">USD ${_fmtN(agTot.b2)}</div></div>
+      <div class="caja-card"><div class="cc-name">+90 días (atrasada)</div><div class="cc-val" style="color:var(--red)">USD ${_fmtN(agTot.b3)}</div></div>
+    </div>`;
+  }
+  html += `<table class="caja-table"><thead><tr>
+    <th>Cliente</th><th>Vendedor</th><th>Lista</th>
+    <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
+  </tr></thead><tbody>`;
+  html += rowsHtml;
   html += `<tr class="caja-total"><td colspan="5">TOTAL DINERO EN CALLE</td>
     <td class="num ${total > 0 ? 'caja-neg' : 'caja-pos'}"><b>USD ${_fmtN(total)}</b></td><td></td></tr>`;
   if (state.treasury.rate > 0) {
