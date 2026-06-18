@@ -233,6 +233,17 @@ primero lo que puede causar pérdida de plata o de datos.
 
 ### ⏳ Pendiente (requiere acción manual o decisión de producto)
 
+0. ~~**C1b — `user_stores` con RLS APAGADO** (auditoría 2026-06-18)~~ — ✅
+   **RESUELTO (2026-06-18)**: en la base en vivo, `user_stores` (la tabla que
+   gobierna todo el RLS por rol) tenía `relrowsecurity=false` y `anon`/
+   `authenticated` con SELECT/INSERT/UPDATE/DELETE → cualquiera con la anon key
+   podía leer/editar/borrar los roles (escalar a `central` o dejar a todos sin
+   acceso = DoS), esquivando todo el endurecimiento C1. Fix aplicado:
+   `enable row level security` + `revoke all ... from anon, authenticated`
+   (defensa en profundidad; `store_role()` es SECURITY DEFINER y sigue
+   funcionando). `schema.sql` actualizado en ambos repos para que no se
+   re-desincronice. Verificado en vivo: RLS=true, grants vacíos, helper ve las
+   6 filas.
 1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
    persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
    Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
