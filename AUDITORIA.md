@@ -260,6 +260,15 @@ primero lo que puede causar pérdida de plata o de datos.
    estado viejo no pisa un catálogo bueno. El conteo publicado se recuerda en
    `Store('catalog_last_pub_count')`. El gran reset (publica vacío a propósito)
    no se ve afectado: va por otra vía (upsert directo).
+0d. ~~**Payload sin validar del lado servidor (M-1 / F5)**~~ — ✅ **RESUELTO
+   (2026-06-18)**: las policies RLS controlaban QUIÉN escribe pero no QUÉ. Se
+   agregaron CHECK constraints en las tablas vendor-writable: `orders.payload`
+   ≤ 1 MB (`octet_length(payload::text)`), `orders.vendor`/`orders.client` y
+   `clients.name`/`clients.vendor` ≤ 200 caracteres, y `clients.list` ∈
+   (act,dist,vip). Topes generosos (un pedido real pesa ~4 KB). Aplicado en la
+   base y agregado a `schema.sql` (ambos repos), idempotente (drop+add).
+   Verificado con prueba negativa: una `list` inválida es rechazada (23514) y
+   la fila no queda.
 1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
    persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
    Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
