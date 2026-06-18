@@ -9969,6 +9969,27 @@ function _markCatalogPublishPending() {
   }
 }
 
+// ── Guard anti-wipe del catálogo (A-3) ──
+// Evita pisar un catálogo bueno con uno drásticamente más chico (p. ej. tras
+// un import malo, un "resetear stock" a medio hacer, o un dispositivo con
+// estado viejo de "central compartida"). Mismo criterio que el guard del
+// vendedor (applyVendorData): caída drástica = antes ≥20 productos y el nuevo
+// trae menos de la mitad. En manual pide confirmación; en auto NO publica y
+// avisa (queda pendiente para publicar a mano tras revisar).
+const CATALOG_DROP_MIN   = 20;   // umbral mínimo para que el guard actúe
+const CATALOG_DROP_RATIO = 0.5;  // "menos de la mitad" del publicado
+
+function _lastPublishedCount() {
+  const v = parseInt(Store.get('catalog_last_pub_count'), 10);
+  return isNaN(v) ? null : v;
+}
+function _setLastPublishedCount(n) {
+  try { Store.set('catalog_last_pub_count', String(n)); } catch (e) {}
+}
+function _isDrasticCatalogDrop(prev, next) {
+  return prev != null && prev >= CATALOG_DROP_MIN && next < prev * CATALOG_DROP_RATIO;
+}
+
 async function publishCatalog(opts = {}) {
   // Modo auto: disparado en segundo plano por un cambio de stock. Silencioso
   // (sin toasts ni status ruidoso); si algo falla, queda pendiente y se
@@ -10016,6 +10037,38 @@ async function publishCatalog(opts = {}) {
   const c = scGetConfig();
   if (!auto) scStatus('Publicando a la nube…', '');
   try {
+    // ── Guard anti-wipe: comparar el conteo nuevo contra el último publicado ──
+    const nuevoCount = built.count || 0;
+    let prev = _lastPublishedCount();
+    if (!auto) {
+      // En manual, además del recordado local, chequeamos el conteo REAL en la
+      // nube (así un dispositivo con estado viejo tampoco pisa un catálogo bueno).
+      try {
+        const { data: cur } = await client
+          .from('catalog').select('payload').eq('id', c.ns).maybeSingle();
+        const cloudCount = (cur && cur.payload && Array.isArray(cur.payload.stock))
+          ? cur.payload.stock.length : null;
+        if (cloudCount != null) prev = (prev == null) ? cloudCount : Math.max(prev, cloudCount);
+      } catch (e) { /* sin red o sin fila: seguimos con el recordado local */ }
+    }
+    if (_isDrasticCatalogDrop(prev, nuevoCount)) {
+      if (auto) {
+        // Automático: NO pisar. Avisar y dejar pendiente para revisión manual.
+        _catalogPublishPending = true;
+        scStatus(`⚠️ Publicación automática frenada: el catálogo bajó de ${prev} a ${nuevoCount} productos. ` +
+                 `Revisá el stock y publicá a mano si es correcto.`, 'err');
+        return;
+      }
+      if (!confirm(
+        `⚠️ Vas a publicar ${nuevoCount} producto(s), pero el catálogo publicado tiene ${prev}.\n\n` +
+        `Esto reemplaza el catálogo de TODOS los vendedores. Si fue un error (import a medias, ` +
+        `stock sin cargar), cancelá y revisá el stock.\n\n¿Publicar igual?`
+      )) {
+        scStatus('Publicación cancelada (caída inusual de productos).', '');
+        return;
+      }
+    }
+
     const { error } = await client
       .from('catalog')
       .upsert({
@@ -10038,6 +10091,7 @@ async function publishCatalog(opts = {}) {
 
     // Éxito: ya no hay nada pendiente.
     _catalogPublishPending = false;
+    _setLastPublishedCount(built.count || 0); // recordar para el guard anti-wipe
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     if (auto) {

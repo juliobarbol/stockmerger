@@ -250,6 +250,16 @@ primero lo que puede causar pérdida de plata o de datos.
    query del código (solo quedaban comentarios históricos). Se respaldó la
    única fila (rev 107, 30-may) y se hizo `drop table workspace`. Verificado:
    ya no existe.
+0c. ~~**Sobrescritura del catálogo entero (A-3)**~~ — ✅ **RESUELTO
+   (2026-06-18)**: `publishCatalog` ahora tiene un guard anti-wipe que espeja
+   al del vendedor (`applyVendorData`): si el catálogo a publicar es una caída
+   drástica (antes ≥20 productos y el nuevo < la mitad) frente al último
+   publicado, en manual pide confirmación (mostrando los números) y en
+   automático NO publica (queda pendiente + aviso en `scStatus`). En manual
+   también compara contra el conteo REAL en la nube, así un dispositivo con
+   estado viejo no pisa un catálogo bueno. El conteo publicado se recuerda en
+   `Store('catalog_last_pub_count')`. El gran reset (publica vacío a propósito)
+   no se ve afectado: va por otra vía (upsert directo).
 1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
    persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
    Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
