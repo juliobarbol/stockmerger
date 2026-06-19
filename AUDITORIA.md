@@ -121,6 +121,14 @@ primero lo que puede causar pérdida de plata o de datos.
       `user_stores` + helper `store_role()`. Login por persona en ambas apps.
       Pendiente opcional: rotar la anon key (con RLS estricta ya no sirve sola,
       pero rotarla limpia el legado; obliga a re-pegar la key en cada teléfono).
+- [x] **Captcha de login (anti fuerza bruta)** ✅ (2026-06-19): Cloudflare
+      Turnstile en las dos pantallas de login de ambas apps; el `captchaToken`
+      viaja en `signInWithPassword` y Supabase lo valida con la clave secreta
+      (`security_captcha_enabled=true`, provider `turnstile`). Verificado:
+      siteverify acepta el secreto; el endpoint de login rechaza sin token
+      (`captcha_failed`). Kill-switch server-side instantáneo. La Site Key es
+      pública (en el HTML); el secreto vive solo en Supabase. Sigue pendiente
+      (opcional) rotar la anon key, que requiere re-pegarla en cada teléfono.
 - [ ] **C2**: barrer todos los `onclick="...('${...}')"` de ambas apps y
       migrar a `data-*` + event delegation (grep: `onclick=\"` con template
       literal).
