@@ -80,7 +80,13 @@ Los problemas reales se concentran en **4 frentes**:
 
 - Multiplicadores de rubro aceptan 0/negativos → precios $0 o negativos exportables (merger `PRICES.JS` ~6426).
 - LWW de `SYNC_ROWS` sin tiebreaker ante colisión de `updated_at` (agregar `device_id`).
-- Sin rate-limit en `pullCatalog`/`flushOrderQueue` (spam de botón = hammering a Supabase).
+- ~~Sin rate-limit en `pullCatalog`/`flushOrderQueue` (spam de botón = hammering
+  a Supabase).~~ ✅ **RESUELTO (2026-06-18)**: `flushOrderQueue` ya tenía el flag
+  `_flushingQueue`; la central ya tenía `_pullOrdersBusy` en `pullOrders`. Se
+  agregó el mismo guard a `pullCatalog` del vendedor (flag `_pullingCatalog` +
+  cooldown de 1.5 s), que era el único sin protección: una sola bajada a la vez
+  y un respiro corto absorben el spam de botón y las ráfagas de Realtime. Cierra
+  también M8 (anti-concurrencia en `pullOrders`/`pullCatalog`).
 - `READE.md` (typo) en vendedor no queda excluido por `.assetsignore` → se publica como asset.
 - `console.log` de migraciones incluye datos de usuario (menor).
 - Sin dedupe por hash de contenido cuando un vendedor re-exporta el mismo pedido con otro `order_id`.
