@@ -2374,6 +2374,16 @@ tr.row-lowstock td{background:#f59e0b08}
 .mcr-item{padding:.6rem .7rem;font-size:.82rem;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)}
 .mcr-item:last-child{border-bottom:none}
 .mcr-item:active{background:var(--surface2)}
+/* Modal de texto propio (reemplaza el prompt() del navegador). */
+.app-modal-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.app-modal{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.2rem;box-shadow:0 16px 48px rgba(0,0,0,.35)}
+.app-modal-title{font-size:.9rem;font-weight:700;color:var(--text);margin-bottom:.9rem;line-height:1.4;white-space:pre-wrap}
+.app-modal-input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:.9rem;padding:.6rem .7rem;border-radius:10px;outline:none;min-height:var(--tap)}
+.app-modal-input:focus{border-color:var(--accent)}
+.app-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1.1rem}
+.app-modal-btn{min-height:var(--tap);padding:.5rem 1.1rem;border-radius:10px;font-family:'Syne',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;border:1px solid var(--border);-webkit-tap-highlight-color:transparent}
+.app-modal-cancel{background:var(--surface2);color:var(--text)}
+.app-modal-ok{background:var(--accent);color:#0d0f14;border-color:var(--accent)}
 .caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
 .caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
 .caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
@@ -3502,6 +3512,19 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="ov-foot">
       <button class="ov-btn" onclick="closeMovForm()">Cancelar</button>
       <button class="ov-btn primary" onclick="saveMovForm()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: pedir texto (reemplaza al prompt() del navegador) ══ -->
+<div id="appPromptOverlay" class="app-modal-overlay" style="display:none" onclick="if(event.target===this)_appPromptClose(null)">
+  <div class="app-modal">
+    <div class="app-modal-title" id="appPromptTitle"></div>
+    <input type="text" id="appPromptInput" class="app-modal-input" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();_appPromptClose(this.value);}else if(event.key==='Escape'){_appPromptClose(null);}">
+    <div class="app-modal-actions">
+      <button class="app-modal-btn app-modal-cancel" onclick="_appPromptClose(null)">Cancelar</button>
+      <button class="app-modal-btn app-modal-ok" onclick="_appPromptClose(document.getElementById('appPromptInput').value)">Aceptar</button>
     </div>
   </div>
 </div>
@@ -7882,9 +7905,9 @@ function closeAssignRubro() {
 }
 
 // Crear rubro nuevo desde el overlay
-function createRubroFromAssign() {
+async function createRubroFromAssign() {
   if (!_assigningPendingKey) return;
-  const name = prompt('Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):');
+  const name = await appPrompt({ title: 'Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):', placeholder: 'Nombre del rubro' });
   if (!name) return;
   const rubroN = normalizeRubro(name);
   if (state.rubrosMultis[rubroN]) {
@@ -8344,8 +8367,8 @@ function deleteRubro() {
 }
 
 // Agregar rubro nuevo
-function openNewRubro() {
-  const name = prompt('Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):');
+async function openNewRubro() {
+  const name = await appPrompt({ title: 'Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):', placeholder: 'Nombre del rubro' });
   if (!name) return;
   const rubroN = normalizeRubro(name);
   if (state.rubrosMultis[rubroN]) {
@@ -14188,6 +14211,29 @@ function movClientHide() {
 }
 // Pequeño retardo: deja que el onmousedown del ítem dispare antes de ocultar.
 function movClientBlurLater() { setTimeout(movClientHide, 200); }
+
+// ── Diálogo de texto propio (reemplaza el prompt() del navegador) ──
+// Devuelve una promesa con el texto, o null si se cancela. Uso:
+//   const x = await appPrompt({ title:'...', placeholder:'...', value:'' });
+let _appPromptResolve = null;
+function appPrompt(opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    _appPromptResolve = resolve;
+    document.getElementById('appPromptTitle').textContent = opts.title || '';
+    const inp = document.getElementById('appPromptInput');
+    inp.value = opts.value || '';
+    inp.placeholder = opts.placeholder || '';
+    inp.type = opts.password ? 'password' : 'text';
+    document.getElementById('appPromptOverlay').style.display = 'flex';
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+  });
+}
+function _appPromptClose(val) {
+  document.getElementById('appPromptOverlay').style.display = 'none';
+  const r = _appPromptResolve; _appPromptResolve = null;
+  if (r) r(val == null ? null : val);
+}
 
 // Sincroniza visibilidad y ayudas del formulario según tipo/cuenta/monto.
 function movFormSync() {
