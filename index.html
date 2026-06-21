@@ -257,7 +257,7 @@ th.sort-asc::after{content:' ↑';color:var(--accent)}
 th.sort-desc::after{content:' ↓';color:var(--accent)}
 td{padding:.6rem 1rem;border-bottom:1px solid #1e253570;font-family:'DM Mono',monospace;vertical-align:middle;white-space:nowrap}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:#1e253540}
+tr:hover td{background:var(--surface2)}
 tr.row-nostock td{background:#f871710a}
 tr.row-lowstock td{background:#f59e0b08}
 .qty-a{color:var(--accent2);font-weight:600}.qty-b{color:var(--warn);font-weight:600}
@@ -957,11 +957,14 @@ tr.row-lowstock td{background:#f59e0b08}
   overflow-x: auto;
   -webkit-overflow-scrolling: touch; /* scroll suave en iOS */
 }
-/* La de rubros entra a lo ancho; SIN overflow para que el thead sticky
-   (encabezado fijo al scrollear) funcione — un overflow en el contenedor
-   rompe position:sticky. */
+/* Ambas tablas scrollean SOLO en horizontal dentro de su tarjeta, para que la
+   página no se desplace de costado en el teléfono cuando las columnas no
+   entran. (El thead deja de quedar fijo al bajar — mismo trade-off que la
+   tabla de productos, que ya funcionaba así.) */
 .rubros-table-wrap {
-  overflow: visible;
+  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .rubros-table, .productos-table {
   width: 100%;
@@ -972,6 +975,10 @@ tr.row-lowstock td{background:#f59e0b08}
    ya que tiene 6 columnas que no entran en mobile. */
 .productos-table {
   min-width: 640px;
+}
+/* La de rubros (5 columnas) también puede no entrar en mobile. */
+.rubros-table {
+  min-width: 480px;
 }
 /* Columnas numéricas más compactas para que entre más en pantalla */
 .productos-table td.num,
@@ -1010,6 +1017,7 @@ tr.row-lowstock td{background:#f59e0b08}
 
 /* Hint visual de scroll horizontal en mobile: sombra a los costados
    que sugiere que hay más contenido para scrollear. */
+.rubros-table-wrap,
 .productos-table-wrap {
   background:
     linear-gradient(to right, rgba(0,0,0,0.35), transparent) 100% 0/14px 100% no-repeat,
