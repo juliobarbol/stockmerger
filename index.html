@@ -4267,6 +4267,9 @@ function addIngestHistoryEntry(entry) {
   const history = loadIngestHistory();
   history.push(entry);
   saveIngestHistory(history);
+  if (typeof addBreadcrumb === 'function') {
+    addBreadcrumb('stock.ingest', { mode: entry.mode, products: entry.productCount, units: entry.totalUnits, file: entry.filename });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -9265,7 +9268,7 @@ function exportForVendor(list) {
 // ════════════════════════════════════════════════════════════════════
 
 const GRAN_RESET_PASS = 'opbayresgranreset';
-const GRAN_RESET_KEEP = ['sb_config', 'docconfig', 'sb-dxntcbssxjxtxznkdsot-auth-token'];
+const GRAN_RESET_KEEP = ['sb_config', 'docconfig', 'sb-dxntcbssxjxtxznkdsot-auth-token', 'event_log_queue'];
 
 async function granReset() {
   const pass = prompt(
@@ -9292,6 +9295,11 @@ async function granReset() {
   msg += '\nSe conservan la conexión a la nube y los datos del emisor.\n' +
     'Antes de borrar se descarga un backup completo de seguridad.\n\n¿Borrar todo?';
   if (!confirm(msg)) return;
+
+  // 0. Registrar el gran reset en la bitácora ANTES de borrar (y subirlo ya,
+  //    mientras todavía hay conexión). La cola se conserva (GRAN_RESET_KEEP).
+  logEvent('gran_reset', { severity: 'warn', summary: 'Gran reset ejecutado (borrado total)', meta: { cloud } });
+  try { if (cloud) await _logFlush(); } catch (e) {}
 
   // 1. Backup de seguridad (best-effort: si no hay nada que exportar, sigue)
   try { exportBackup(false); } catch (e) { console.warn('granReset backup:', e); }
@@ -9916,6 +9924,8 @@ async function _sbDoLogin(email, pass, captchaToken) {
       return { ok:false, msg:'Completá la verificación "no soy un robot" e intentá de nuevo.' };
     return { ok:false, msg:'No se pudo iniciar sesión. Verificá email y contraseña.' };
   }
+  addBreadcrumb('login', { email });
+  try { setTimeout(_logFlush, 1000); } catch (e) {}   // subir lo que haya quedado en cola
   return { ok:true };
 }
 
@@ -10145,6 +10155,7 @@ async function publishCatalog(opts = {}) {
 
     if (error) {
       console.error('publishCatalog error:', error);
+      logEvent('catalog.publish.fail', { severity: 'error', summary: 'Error al publicar catálogo: ' + (error.message || '?'), error, meta: { auto, count: built.count || 0 } });
       if (auto) {
         _markCatalogPublishPending();
       } else {
@@ -10158,6 +10169,7 @@ async function publishCatalog(opts = {}) {
     // Éxito: ya no hay nada pendiente.
     _catalogPublishPending = false;
     _setLastPublishedCount(built.count || 0); // recordar para el guard anti-wipe
+    addBreadcrumb('catalog.publish', { count: built.count || 0, auto });
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     if (auto) {
@@ -10170,6 +10182,7 @@ async function publishCatalog(opts = {}) {
     }
   } catch (e) {
     console.error('publishCatalog exception:', e);
+    logEvent('catalog.publish.fail', { severity: 'error', summary: 'Excepción al publicar catálogo', error: e, meta: { auto, count: built.count || 0 } });
     if (auto) {
       _markCatalogPublishPending();
     } else {
@@ -10298,6 +10311,7 @@ async function _doPullOrders(opts = {}) {
     const { data, error } = await q;
     if (error) {
       console.error('pullOrders error:', error);
+      logEvent('orders.pull.fail', { severity: 'error', summary: 'Error al traer pedidos: ' + (error.message || '?'), error, meta: { silent } });
       toast('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       scStatus('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       return;
@@ -10350,6 +10364,7 @@ async function _doPullOrders(opts = {}) {
     scStatus(msg, 'ok');
   } catch (e) {
     console.error('pullOrders exception:', e);
+    logEvent('orders.pull.fail', { severity: 'error', summary: 'Excepción al traer pedidos', error: e, meta: { silent } });
     toast('Error de red al traer pedidos: ' + (e.message || 'sin conexión'), 'err');
     scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
   }
@@ -10391,6 +10406,226 @@ window.addEventListener('online', retryCatalogPublishIfPending);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') retryCatalogPublishIfPending();
 });
+
+
+// ════════════════════════════════════════════════════════════════════
+// LOG.JS — StockMerger — bitácora de diagnóstico (errores + contexto)
+// ════════════════════════════════════════════════════════════════════
+//
+// NO es un log visible para el usuario: es una bitácora REMOTA para
+// diagnosticar cuando alguien reporta un error. Captura los crashes de JS
+// (window.onerror / unhandledrejection) y los fallos de operaciones
+// riesgosas, con stack, contexto del dispositivo y "migas de pan" (las
+// últimas acciones antes del error). Cada error le muestra al usuario un
+// código corto (ref) para que lo cite al avisar; nosotros lo buscamos en la
+// tabla `event_log` de Supabase por la Management API.
+//
+// Best-effort total: NUNCA tira excepción ni rompe la app. Si no hay nube,
+// no hace nada (modo file-only intacto). Si hay nube pero falla la subida
+// (offline / sin sesión), el evento queda en una cola local y se reintenta
+// al volver la conexión (igual que la cola de pedidos).
+// ════════════════════════════════════════════════════════════════════
+
+const LOG_APP       = 'merger';   // 'merger' | 'vendor'
+const LOG_ROLE      = 'central';  // rol fijo de esta app
+const LOG_QUEUE_KEY = 'event_log_queue';
+const LOG_QUEUE_MAX = 200;        // tope de la cola local (no crece sin freno)
+const LOG_CRUMB_MAX = 25;         // migas de pan en memoria
+
+let _logCrumbs    = [];           // ring buffer de acciones recientes (en memoria)
+let _logSuppress  = false;        // anti-recursión: no loguear errores del propio logger
+let _logSwName    = '';           // nombre del cache del SW (≈ versión publicada)
+let _logFlushing  = false;        // evita subidas solapadas
+let _logLastToast = 0;            // throttle del aviso al usuario
+const _logRecent  = Object.create(null); // dedupe de errores idénticos
+
+// Nombre del cache del SW = proxy de la versión publicada (se actualiza solo
+// en cada deploy). Se lee una vez, async, al cargar.
+try {
+  if (window.caches && caches.keys) {
+    caches.keys().then(ks => {
+      _logSwName = (ks && (ks.find(k => /stock/i.test(k)) || ks[0])) || '';
+    }).catch(() => {});
+  }
+} catch (e) {}
+
+// Migas de pan: registra una acción significativa. NO se sube sola; viaja
+// adjunta al próximo error para reconstruir qué pasó antes.
+function addBreadcrumb(event, data) {
+  try {
+    _logCrumbs.push({ t: new Date().toISOString(), event, data: (data == null ? null : data) });
+    if (_logCrumbs.length > LOG_CRUMB_MAX) _logCrumbs.shift();
+  } catch (e) {}
+}
+
+// Código de referencia corto (ej. "A3F9") que se le muestra al usuario.
+function _logRef() {
+  try {
+    const n = (window.crypto && crypto.getRandomValues)
+      ? crypto.getRandomValues(new Uint32Array(1))[0]
+      : Math.floor(Math.random() * 0xffffffff);
+    return n.toString(36).toUpperCase().slice(-4).padStart(4, '0');
+  } catch (e) {
+    return String(Date.now()).slice(-4);
+  }
+}
+
+// Usuario guardado (aunque el token esté vencido) para llenar 'actor'.
+function _logStoredUser() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    return raw ? (JSON.parse(raw)?.user || null) : null;
+  } catch (e) { return null; }
+}
+function _logActor() {
+  try {
+    const u = _logStoredUser();
+    if (!u) return '';
+    const m = u.app_metadata || {};
+    if (m.vendor_name || m.vendor_code) {
+      return (m.vendor_name || '') + (m.vendor_code ? ' (' + m.vendor_code + ')' : '');
+    }
+    return u.email || u.id || '';
+  } catch (e) { return ''; }
+}
+
+// Contexto del dispositivo (para diagnosticar sin estar ahí).
+function _logContext() {
+  const ctx = {};
+  try {
+    ctx.ua     = navigator.userAgent;
+    ctx.online = navigator.onLine;
+    ctx.url    = location.href;
+    ctx.lang   = navigator.language;
+    ctx.ver    = _logSwName;
+    if (window.screen) ctx.screen = screen.width + 'x' + screen.height;
+  } catch (e) {}
+  return ctx;
+}
+
+// Normaliza un Error (o lo que sea) a algo serializable, con stack.
+function _logErrInfo(err) {
+  try {
+    if (!err) return null;
+    if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack || '' };
+    if (typeof err === 'object') return { message: err.message || '', code: err.code || '', detail: String(err.detail || ''), stack: err.stack || '' };
+    return { message: String(err) };
+  } catch (e) { return null; }
+}
+
+// ── Cola local durable ──
+function _loadLogQueue() {
+  try {
+    const p = JSON.parse(localStorage.getItem(LOG_QUEUE_KEY) || '[]');
+    return Array.isArray(p) ? p : [];
+  } catch (e) { return []; }
+}
+function _saveLogQueue(q) {
+  try { localStorage.setItem(LOG_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+}
+
+// Registra un evento. opts: { severity, summary, meta, error }.
+// Devuelve el código de referencia (siempre, aunque la subida falle).
+function logEvent(event, opts) {
+  const o = opts || {};
+  const ref = _logRef();
+  try {
+    if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return ref; // sin nube: no registra
+    const meta = Object.assign({}, o.meta || {});
+    meta.ctx = _logContext();
+    meta.breadcrumbs = _logCrumbs.slice(-LOG_CRUMB_MAX);
+    if (o.error) meta.error = _logErrInfo(o.error);
+    const row = {
+      _qid:        ref + '-' + Date.now(),
+      ref,
+      ns:          (scGetConfig() || {}).ns || 'default',
+      app:         LOG_APP,
+      event:       String(event || '').slice(0, 120),
+      severity:    o.severity || 'info',
+      summary:     String(o.summary || '').slice(0, 4000),
+      meta,
+      actor:       _logActor(),
+      role:        LOG_ROLE,
+      occurred_at: new Date().toISOString(),
+    };
+    const q = _loadLogQueue();
+    q.push(row);
+    while (q.length > LOG_QUEUE_MAX) q.shift();   // tope: descarta lo más viejo
+    _saveLogQueue(q);
+    _logFlush();   // intento de subida inmediato (no se espera)
+  } catch (e) {
+    try { console.warn('logEvent:', e && e.message); } catch (_) {}
+  }
+  return ref;
+}
+
+// Sube lo que haya en la cola. Best-effort; requiere nube + sesión guardada.
+async function _logFlush() {
+  if (_logFlushing) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured() || !scLibReady()) return;
+  if (!_sbHasStoredSession()) return;            // sin sesión, RLS rechaza → esperar
+  const client = scClient();
+  if (!client) return;
+  if (!_loadLogQueue().length) return;
+  _logFlushing = true;
+  try {
+    const batch = _loadLogQueue().slice(0, 50);
+    const rows  = batch.map(r => { const x = Object.assign({}, r); delete x._qid; return x; });
+    const { error } = await client.from('event_log').insert(rows);
+    if (error) { try { console.warn('event_log flush:', error.message); } catch (_) {} return; }
+    const done = new Set(batch.map(r => r._qid));
+    _saveLogQueue(_loadLogQueue().filter(r => !done.has(r._qid)));
+  } catch (e) {
+    try { console.warn('event_log flush red:', e && e.message); } catch (_) {}
+  } finally {
+    _logFlushing = false;
+  }
+}
+
+// ── Captura automática de errores no atrapados ──
+function _logShowRef(ref) {
+  try {
+    const now = Date.now();
+    if (now - _logLastToast < 4000) return;       // throttle: no spamear avisos
+    _logLastToast = now;
+    if (typeof toast === 'function') {
+      toast('Ocurrió un error (ref: ' + ref + '). Si se repite, avisanos con ese código.', 'err');
+    }
+  } catch (e) {}
+}
+function _logHandleError(event, summary, errObj, extraMeta) {
+  if (_logSuppress) return;
+  _logSuppress = true;
+  try {
+    const sig = event + '|' + (summary || '');     // dedupe: mismo error en <10s no se reencola
+    const now = Date.now();
+    if (_logRecent[sig] && (now - _logRecent[sig]) < 10000) return;
+    _logRecent[sig] = now;
+    const ref = logEvent(event, { severity: 'error', summary, error: errObj, meta: extraMeta });
+    _logShowRef(ref);
+  } catch (e) {
+    try { console.warn('logHandleError:', e && e.message); } catch (_) {}
+  } finally {
+    _logSuppress = false;
+  }
+}
+
+try {
+  window.addEventListener('error', (e) => {
+    if (!e || (!e.message && !e.error)) return;    // ignora errores de carga de recursos
+    _logHandleError('error.uncaught', (e.message) || 'Error', e.error,
+      { source: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    const msg = (r && r.message) ? r.message : (r ? String(r) : 'Promesa rechazada');
+    _logHandleError('error.promise', msg, r, null);
+  });
+  window.addEventListener('online', () => { _logFlush(); });
+} catch (e) {}
+
+// Al cargar el módulo, intentar subir lo que haya quedado de antes.
+try { _logFlush(); } catch (e) {}
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -11017,6 +11252,7 @@ function _doConfirmReceivedOrder(localId) {
   // confirmados a partir de esta versión generan deuda del cliente —
   // los confirmados antes se consideran ya cobrados.
   order.ctaCte      = true;
+  addBreadcrumb('order.confirm', { id: localId, client: order.cliente || order.client || '', items: order.items.length });
 
   saveReceivedOrders();
   saveMerged();
