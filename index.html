@@ -1826,6 +1826,10 @@ tr.row-lowstock td{background:#f59e0b08}
 }
 .od-table td.od-num { text-align: right; font-family: 'DM Mono', monospace; }
 .od-table td.od-num { white-space: nowrap; }
+/* El detalle del pedido entra entero: los nombres largos bajan de renglón en
+   vez de empujar la tabla (y la página) de costado. Las columnas numéricas
+   siguen sin cortarse (regla .od-num de arriba). */
+.od-table td { white-space: normal; word-break: break-word; }
 .od-meta {
   font-size: .58rem;
   color: var(--muted);
@@ -2359,6 +2363,9 @@ tr.row-lowstock td{background:#f59e0b08}
 .caja-card .cc-name{font-size:.62rem;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .caja-card .cc-val{font-size:1.05rem;font-weight:800;margin-top:.25rem;font-family:'DM Mono',monospace}
 .caja-table{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.74rem}
+/* Reportes de Caja: la tabla se desliza SOLO ella dentro de su tarjeta, para
+   que la página no se corra de costado (mismo criterio que Precios). */
+.caja-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
 .caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
 .caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
