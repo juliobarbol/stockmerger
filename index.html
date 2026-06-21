@@ -9354,12 +9354,13 @@ const GRAN_RESET_PASS = 'opbayresgranreset';
 const GRAN_RESET_KEEP = ['sb_config', 'docconfig', 'sb-dxntcbssxjxtxznkdsot-auth-token', 'event_log_queue'];
 
 async function granReset() {
-  const pass = prompt(
-    '🧨 GRAN RESET\n\n' +
-    'Esto borra TODOS los datos de la app (stock, precios, pedidos, clientes, ' +
-    'caja y los datos de prueba de la nube) para empezar de cero.\n\n' +
-    'Para continuar, escribí la contraseña:'
-  );
+  const pass = await appPrompt({
+    title: '🧨 GRAN RESET\n\n' +
+      'Esto borra TODOS los datos de la app (stock, precios, pedidos, clientes, ' +
+      'caja y los datos de prueba de la nube) para empezar de cero.\n\n' +
+      'Para continuar, escribí la contraseña:',
+    password: true
+  });
   if (pass === null) return;
   if (pass.trim() !== GRAN_RESET_PASS) {
     toast('Contraseña incorrecta — no se borró nada.', 'err');
@@ -9899,8 +9900,8 @@ function sbLockRefresh() {
   }
 }
 
-function sbUnlockConfig() {
-  const pass = prompt('Contraseña para ver/editar la conexión:');
+async function sbUnlockConfig() {
+  const pass = await appPrompt({ title: 'Contraseña para ver/editar la conexión:', password: true });
   if (pass === null) return;
   if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
   _sbCfgUnlocked = true;
@@ -10041,10 +10042,10 @@ async function authGateLogin() {
 }
 // Escape para configurar la conexión (URL/key) cuando aún no hay con qué
 // loguearse. Protegido por la contraseña del candado.
-function authGateConfig() {
-  const pass = prompt('Contraseña para configurar la conexión:');
+async function authGateConfig() {
+  const pass = await appPrompt({ title: 'Contraseña para configurar la conexión:', password: true });
   if (pass === null) return;
-  if (pass.trim() !== SB_CFG_PASS) { alert('Contraseña incorrecta.'); return; }
+  if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
   _authGateBypass = true;
   _sbCfgUnlocked = true;
   authGateRefresh();
