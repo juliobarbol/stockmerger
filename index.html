@@ -2352,6 +2352,9 @@ tr.row-lowstock td{background:#f59e0b08}
 /* ══ CAJA / TESORERÍA (v26) ══ */
 .caja-rate-box{display:flex;align-items:center;gap:.4rem;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:.3rem .6rem;font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted)}
 .caja-rate-box input{width:7.5rem;min-height:0;padding:.3rem .45rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-family:'DM Mono',monospace;font-size:.8rem}
+.caja-rate-fetch{min-height:0;padding:.3rem .5rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:.85rem;line-height:1}
+.caja-rate-fetch:hover{background:var(--surface2)}
+.caja-rate-fetch.loading{opacity:.5;pointer-events:none}
 .caja-subtabs{display:flex;gap:.3rem;padding:.5rem 1rem .4rem;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;background:var(--bg)}
 .caja-subtabs::-webkit-scrollbar{display:none}
 .caja-body{padding:1rem;max-width:1100px;margin:0 auto;width:100%}
@@ -3175,6 +3178,8 @@ tr.row-lowstock td{background:#f59e0b08}
       <input type="number" id="cajaRateInput" min="0" step="0.01" placeholder="cotización"
         onchange="setCajaRate(this.value)">
       <span>ARS</span>
+      <button type="button" class="caja-rate-fetch" onclick="fetchDolarBlueInto('caja')"
+        title="Traer el dólar blue (venta) del día automáticamente">🔄</button>
     </div>
     <button class="btn-orders primary" onclick="openMovForm()">➕ Movimiento</button>
   </div>
@@ -3395,7 +3400,11 @@ tr.row-lowstock td{background:#f59e0b08}
           </div>
           <div>
             <label>Tipo de cambio (1 USD =)</label>
-            <input type="number" id="docTC" min="0" step="0.01">
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <input type="number" id="docTC" min="0" step="0.01" style="flex:1">
+              <button type="button" class="caja-rate-fetch" onclick="fetchDolarBlueInto('doc')"
+                title="Traer el dólar blue (venta) del día automáticamente">🔄</button>
+            </div>
           </div>
         </div>
         <div>
@@ -12322,7 +12331,10 @@ function openDocModal(localId) {
   // Setear valores por defecto
   document.getElementById('docTipo').value     = cfg.ultimoTipoDoc || 'PRESUPUESTO';
   document.getElementById('docNumero').value   = cfg.proxNumero;
-  document.getElementById('docTC').value       = cfg.ultimoTC;
+  // El tipo de cambio sale de la cotización del día de Caja (state.treasury.rate),
+  // así el PDF y la pestaña Caja usan siempre el mismo dólar. Si todavía no se
+  // cargó ninguna cotización, cae al último TC usado en un documento.
+  document.getElementById('docTC').value       = (state.treasury.rate > 0 ? state.treasury.rate : cfg.ultimoTC);
   document.getElementById('docCliente').value  = order.client || '';
   // Resumen
   const sum = `${order.items.length} items · USD ${_fmtN(order.total)}`;
@@ -12401,6 +12413,18 @@ function confirmDocModal() {
     state.docConfig.ultimoTC      = tc;
     state.docConfig.ultimoTipoDoc = tipo;
     saveDocConfig();
+
+    // Sincronizar con la cotización del día de Caja: si en el PDF se usó un
+    // tipo de cambio distinto, queda también como cotización del día (y viceversa,
+    // openDocModal ya precarga desde ahí). Así ambas partes muestran el mismo dólar.
+    if (state.treasury.rate !== tc) {
+      state.treasury.rate = tc;
+      state.treasury.rateUpdatedAt = new Date().toISOString();
+      saveTreasury();
+      if (typeof renderCajaTab === 'function' && document.getElementById('cajaRateInput')) {
+        try { renderCajaTab(); } catch (_) {}
+      }
+    }
 
     // Anotar el doc generado en el pedido
     order.docs = order.docs || [];
@@ -14122,6 +14146,45 @@ function setCajaRate(v) {
   saveTreasury();
   toast(`Cotización del día: 1 USD = $ ${_fmtN(rate)} ✓`, 'ok');
   renderCajaTab();
+}
+
+// ── Dólar blue automático ──
+// Trae el dólar blue (valor "venta") de una fuente pública gratuita con CORS.
+// InfoDólar no se puede leer directo desde el navegador (lo bloquea CORS), pero
+// dolarapi.com publica el MISMO blue en JSON. Best-effort: si falla, avisa y no rompe.
+async function fetchDolarBlue() {
+  const res = await fetch('https://dolarapi.com/v1/dolares/blue', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  const venta = parseFloat(data && data.venta);
+  if (!venta || venta <= 0) throw new Error('respuesta sin venta');
+  return venta;
+}
+
+// Botón 🔄 (en Caja y en el modal del PDF): trae el blue "venta" y lo carga como
+// cotización. En Caja lo fija como cotización del día; en el PDF solo llena el
+// campo (al generar el PDF se sincroniza con Caja, ver confirmDocModal).
+async function fetchDolarBlueInto(target) {
+  const btns = document.querySelectorAll('.caja-rate-fetch');
+  btns.forEach(b => b.classList.add('loading'));
+  toast('Buscando dólar blue…', 'ok');
+  let venta;
+  try {
+    venta = await fetchDolarBlue();
+  } catch (e) {
+    if (typeof addBreadcrumb === 'function') addBreadcrumb('fetchDolarBlue:error', { msg: String(e && e.message || e) });
+    toast('No se pudo traer el dólar blue. Probá de nuevo o cargalo a mano.', 'err');
+    return;
+  } finally {
+    btns.forEach(b => b.classList.remove('loading'));
+  }
+  if (target === 'doc') {
+    const el = document.getElementById('docTC');
+    if (el) el.value = venta;
+    toast(`Dólar blue (venta): 1 USD = $ ${_fmtN(venta)} ✓`, 'ok');
+  } else {
+    setCajaRate(venta);
+  }
 }
 
 // ── Sub-pestañas ──
