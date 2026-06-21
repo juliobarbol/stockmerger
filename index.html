@@ -2384,6 +2384,8 @@ tr.row-lowstock td{background:#f59e0b08}
 .app-modal-btn{min-height:var(--tap);padding:.5rem 1.1rem;border-radius:10px;font-family:'Syne',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;border:1px solid var(--border);-webkit-tap-highlight-color:transparent}
 .app-modal-cancel{background:var(--surface2);color:var(--text)}
 .app-modal-ok{background:var(--accent);color:#0d0f14;border-color:var(--accent)}
+.app-modal-msg{font-size:.85rem;color:var(--text);line-height:1.5;white-space:pre-wrap;max-height:55vh;overflow-y:auto}
+.app-modal-danger{background:#e5484d;color:#fff;border-color:#e5484d}
 /* ── Desplegable propio (reemplaza la lista nativa del <select>). El select
    queda oculto pero funcional; la lista flota a nivel de página para no quedar
    recortada dentro de modales o áreas con scroll. Ver enhanceSelect(). ── */
@@ -3539,6 +3541,17 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="app-modal-actions">
       <button class="app-modal-btn app-modal-cancel" onclick="_appPromptClose(null)">Cancelar</button>
       <button class="app-modal-btn app-modal-ok" onclick="_appPromptClose(document.getElementById('appPromptInput').value)">Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: confirmar (reemplaza al confirm() del navegador) ══ -->
+<div id="appConfirmOverlay" class="app-modal-overlay" style="display:none" onclick="if(event.target===this)_appConfirmClose(false)">
+  <div class="app-modal">
+    <div class="app-modal-msg" id="appConfirmMsg"></div>
+    <div class="app-modal-actions">
+      <button class="app-modal-btn app-modal-cancel" id="appConfirmCancel" onclick="_appConfirmClose(false)">Cancelar</button>
+      <button class="app-modal-btn app-modal-ok" id="appConfirmOk" onclick="_appConfirmClose(true)">Aceptar</button>
     </div>
   </div>
 </div>
@@ -6491,8 +6504,8 @@ function deleteDecision(memKey) {
   toast('Decisión eliminada de la memoria', 'ok');
 }
 
-function clearAllDecisions() {
-  if (!confirm('¿Borrar todas las decisiones guardadas?')) return;
+async function clearAllDecisions() {
+  if (!await appConfirm({ message: '¿Borrar todas las decisiones guardadas?', okText: 'Borrar', danger: true })) return;
   state.dupMemory = {};
   saveDupMemory(); updateMemBadge(); renderDecisions();
   toast('Memoria borrada', 'ok');
@@ -7736,9 +7749,9 @@ function retryAllPendingInference() {
 }
 
 // ── Limpiar pendientes manualmente ──
-function clearInferPending() {
+async function clearInferPending() {
   if (!state.inferPending.length) return;
-  if (!confirm(`¿Borrar los ${state.inferPending.length} pendientes de inferencia?`)) return;
+  if (!await appConfirm({ message: `¿Borrar los ${state.inferPending.length} pendientes de inferencia?`, okText: 'Borrar', danger: true })) return;
   state.inferPending = [];
   saveInferPending();
   if (typeof renderInferPendingBadge === 'function') renderInferPendingBadge();
@@ -8368,9 +8381,9 @@ function saveRubroEdit() {
   toast(msg, 'ok');
 }
 
-function deleteRubro() {
+async function deleteRubro() {
   if (!_editingRubro) return;
-  if (!confirm(`¿Borrar el rubro "${_editingRubro}"?\n\nLos productos con este rubro quedarán sin multiplicadores (a menos que tengan personalización).`)) return;
+  if (!await appConfirm({ message: `¿Borrar el rubro "${_editingRubro}"?\n\nLos productos con este rubro quedarán sin multiplicadores (a menos que tengan personalización).`, okText: 'Borrar', danger: true })) return;
   delete state.rubrosMultis[_editingRubro];
   saveRubrosMultis();
   markPricesDirty();
@@ -8690,9 +8703,9 @@ function saveProductOverride() {
   toast(hasAny ? 'Personalización guardada ✓' : 'Personalización eliminada (vuelve al rubro) ✓', 'ok');
 }
 
-function clearProductOverride() {
+async function clearProductOverride() {
   if (!_editingProductKey) return;
-  if (!confirm('¿Quitar la personalización y volver a usar el multiplicador del rubro?')) return;
+  if (!await appConfirm({ message: '¿Quitar la personalización y volver a usar el multiplicador del rubro?', okText: 'Quitar', danger: true })) return;
   delete state.prices[_editingProductKey];
   savePrices();
   markPricesDirty();
@@ -8703,8 +8716,8 @@ function clearProductOverride() {
 }
 
 // ── Reset general ──
-function resetAllPrices() {
-  if (!confirm(`¿Borrar TODAS las personalizaciones de productos (${Object.keys(state.prices).length})?\n\nLos rubros y el factor Distribuidor se mantienen.`)) return;
+async function resetAllPrices() {
+  if (!await appConfirm({ message: `¿Borrar TODAS las personalizaciones de productos (${Object.keys(state.prices).length})?\n\nLos rubros y el factor Distribuidor se mantienen.`, okText: 'Borrar', danger: true })) return;
   state.prices = {};
   savePrices();
   markPricesDirty();
@@ -11457,16 +11470,16 @@ function _doConfirmReceivedOrder(localId) {
 // ── Revertir confirmación: restaura el stock al estado previo ──
 // Solo posible si confirmamos con snapshot guardado. Si la versión vieja
 // no tenía snapshot, no se puede revertir (es lo esperado).
-function revertReceivedOrder(localId) {
+async function revertReceivedOrder(localId) {
   if (!_markProcessing(localId)) return;
   try {
-    _doRevertReceivedOrder(localId);
+    await _doRevertReceivedOrder(localId);
   } finally {
     _unmarkProcessing(localId);
   }
 }
 
-function _doRevertReceivedOrder(localId) {
+async function _doRevertReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   if (order.status !== 'confirmado') {
@@ -11509,7 +11522,7 @@ function _doRevertReceivedOrder(localId) {
   }
   msg += `\n\n¿Continuar?`;
 
-  if (!confirm(msg)) return;
+  if (!await appConfirm({ message: msg, okText: 'Revertir' })) return;
 
   // Restaurar el stock por DELTA: sumamos de vuelta exactamente lo que este
   // pedido descontó (qtyBefore - qtyAfter), en lugar de fijar el valor
@@ -11550,14 +11563,14 @@ function _doRevertReceivedOrder(localId) {
 }
 
 // ── Descartar pedido (sin descontar stock) ──
-function discardReceivedOrder(localId) {
+async function discardReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   if (order.status === 'confirmado') {
     toast('Este pedido ya está confirmado, no se puede descartar.', 'err');
     return;
   }
-  if (!confirm(`¿Descartar el pedido de ${order.vendor} (${order.client})?\nNo se descuenta nada del stock.`)) return;
+  if (!await appConfirm({ message: `¿Descartar el pedido de ${order.vendor} (${order.client})?\nNo se descuenta nada del stock.`, okText: 'Descartar', danger: true })) return;
   order.status = 'descartado';
   saveReceivedOrders();
   renderOrdersTab();
@@ -11565,14 +11578,14 @@ function discardReceivedOrder(localId) {
 }
 
 // ── Eliminar pedido del historial (definitivo) ──
-function deleteReceivedOrder(localId) {
+async function deleteReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   let msg = `¿Eliminar definitivamente este pedido?`;
   if (order.status === 'confirmado') {
     msg += `\n\n⚠️ Este pedido ya está confirmado. Eliminarlo NO REVIERTE el descuento de stock — solo borra el registro.`;
   }
-  if (!confirm(msg)) return;
+  if (!await appConfirm({ message: msg, okText: 'Eliminar', danger: true })) return;
   state.receivedOrders = state.receivedOrders.filter(o => o.localId !== localId);
   saveReceivedOrders();
   renderOrdersTab();
@@ -11580,13 +11593,13 @@ function deleteReceivedOrder(localId) {
 }
 
 // ── Limpiar todos los pedidos descartados ──
-function purgeDiscardedOrders() {
+async function purgeDiscardedOrders() {
   const n = state.receivedOrders.filter(o => o.status === 'descartado').length;
   if (n === 0) {
     toast('No hay pedidos descartados.', 'err');
     return;
   }
-  if (!confirm(`¿Eliminar ${n} pedido(s) descartado(s) del historial?`)) return;
+  if (!await appConfirm({ message: `¿Eliminar ${n} pedido(s) descartado(s) del historial?`, okText: 'Eliminar', danger: true })) return;
   state.receivedOrders = state.receivedOrders.filter(o => o.status !== 'descartado');
   saveReceivedOrders();
   renderOrdersTab();
@@ -12199,10 +12212,10 @@ function saveClientForm() {
   toast(isNew ? `Cliente ${name} creado ✓` : 'Ficha actualizada ✓', 'ok');
 }
 
-function deleteClientForm() {
+async function deleteClientForm() {
   const c = _editingClientId ? state.clients.find(x => x.id === _editingClientId) : null;
   if (!c) { closeClientForm(); return; }
-  if (!confirm(`¿Borrar la ficha de "${c.name}"?\n\nLos pedidos no se tocan; solo se pierden la lista asignada y las notas.`)) return;
+  if (!await appConfirm({ message: `¿Borrar la ficha de "${c.name}"?\n\nLos pedidos no se tocan; solo se pierden la lista asignada y las notas.`, okText: 'Borrar', danger: true })) return;
   state.clients = state.clients.filter(x => x.id !== c.id);
   saveClients();
   closeClientForm();
@@ -14161,13 +14174,13 @@ function addCajaMovement(mov) {
   saveTreasury();
 }
 
-function deleteCajaMovement(id) {
+async function deleteCajaMovement(id) {
   const i = (state.treasury.movements || []).findIndex(m => m.id === id);
   if (i < 0) return;
   const m = state.treasury.movements[i];
   const cat = _cajaCat(m.category);
   const acc = _cajaAcc(m.account);
-  if (!confirm(`¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`)) return;
+  if (!await appConfirm({ message: `¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`, okText: 'Borrar', danger: true })) return;
   state.treasury.movements.splice(i, 1);
   saveTreasury();
   renderCajaTab();
@@ -14250,6 +14263,32 @@ function _appPromptClose(val) {
   document.getElementById('appPromptOverlay').style.display = 'none';
   const r = _appPromptResolve; _appPromptResolve = null;
   if (r) r(val == null ? null : val);
+}
+
+// ── Diálogo de confirmar propio (reemplaza el confirm() del navegador) ──
+// Devuelve una promesa que resuelve true (Aceptar) o false (Cancelar). Uso:
+//   if (!await appConfirm('¿Borrar?')) return;
+//   if (!await appConfirm({ message:'...', okText:'Borrar', danger:true })) return;
+let _appConfirmResolve = null;
+function appConfirm(opts) {
+  if (typeof opts === 'string') opts = { message: opts };
+  opts = opts || {};
+  return new Promise(resolve => {
+    _appConfirmResolve = resolve;
+    document.getElementById('appConfirmMsg').textContent = opts.message || '';
+    const ok = document.getElementById('appConfirmOk');
+    const cancel = document.getElementById('appConfirmCancel');
+    ok.textContent = opts.okText || 'Aceptar';
+    cancel.textContent = opts.cancelText || 'Cancelar';
+    ok.classList.toggle('app-modal-danger', !!opts.danger);
+    document.getElementById('appConfirmOverlay').style.display = 'flex';
+    setTimeout(() => { try { cancel.focus(); } catch (e) {} }, 50);
+  });
+}
+function _appConfirmClose(val) {
+  document.getElementById('appConfirmOverlay').style.display = 'none';
+  const r = _appConfirmResolve; _appConfirmResolve = null;
+  if (r) r(!!val);
 }
 
 // ── Desplegable propio para <select> (la lista del sistema no se puede pintar).
