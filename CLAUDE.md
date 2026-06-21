@@ -292,6 +292,49 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
+- **EN CURSO (2026-06-21): rediseño de UI ("estilo DaisyUI" sin build) — rama
+  `claude/light-theme-ui-dtlqb5`, todo MERGEADO a `main`.** Trabajo con Julio,
+  por etapas y publicando cada una. Hecho hasta ahora:
+  - **Tema claro/oscuro**: variables en `html[data-theme="light"]` (CSS, justo
+    tras `:root`); script inline en el `<head>` (`applyTheme`/`toggleTheme`,
+    `localStorage['ui_theme']`, default `dark`); botón `#themeToggleBtn` en el
+    hero de Archivos. `meta[name=theme-color]` se actualiza solo.
+  - **Tarjetas limpias** (paneles de config como cards): `.backup-section`
+    (pestaña Archivos).
+  - **Tablas que no corren la página** (scroll horizontal contenido):
+    `.rubros-table-wrap` (Precios), wrapper `.caja-tscroll` alrededor de cada
+    `<table class="caja-table">` (Reportes de Caja — se envuelven en CAJA.JS),
+    `.od-table td` que envuelve texto largo (detalle de Pedidos). `tr:hover td`
+    ahora usa `var(--surface2)` (antes color fijo, se veía feo en claro).
+  - **Selector de cliente in-app** (Caja → Movimiento): reemplaza el `datalist`
+    nativo. `movClientFilter`/`movClientPick`/`movClientHide`/`movClientBlurLater`,
+    markup `#movClientResults`, CSS `.mov-client-results`/`.mcr-item`.
+  - **Diálogo de texto propio** (reemplaza `prompt()`/`alert()` del navegador):
+    `appPrompt({title,placeholder,value,password})` → Promise; `_appPromptClose`;
+    markup `#appPromptOverlay`; CSS `.app-modal*`. Aplicado en `openNewRubro`,
+    `createRubroFromAssign`, `granReset`, `sbUnlockConfig`, `authGateConfig`.
+  - **Desplegable propio para `<select>`** (la lista nativa no se puede pintar):
+    `enhanceSelect(sel)` oculta el `<select>` (`.csel-native`; sigue funcional:
+    al elegir setea `value` + dispara `change`), pone trigger `.csel-trigger` y
+    lista `.csel-pop` **flotante** (position:fixed, colgada del `<body>`, para
+    no recortarse en modales/scroll). `refreshSelect` re-sincroniza el texto
+    tras fijar value por código; `enhanceAllSelects` + `_watchSelects`
+    (MutationObserver) cubren también los `<select>` dinámicos (cuenta/mes de
+    Reportes de Caja). Init: `_initCustomSelects`.
+  - **PENDIENTE**:
+    - El `prompt()` de "¿qué lista trae el Excel? (7/VIP)" (`const choice =
+      prompt(...)`): pasarlo a un modal de **2 botones** (mejor que tipear). Es
+      el ÚNICO `prompt()` de texto que queda a la vista.
+    - Opcional: los `confirm()`/`alert()` restantes → mismo cuadro propio.
+    - Sin tocar a propósito: `<input type="date">` (mejor nativo) y los
+      `datalist` de marca/rubro en crear producto manual (mismo patrón que el
+      cliente si se quisiera).
+    - Falta que Julio confirme los desplegables en ventanas/modales y dinámicos.
+  > Mismo rediseño en StockVendedor (mantener en sync). Diferencias: el vendedor
+  > NO tiene `appPrompt` todavía (sus `prompt()` de contraseña siguen nativos)
+  > ni MutationObserver (enhancea en load); sí tiene tema, tarjetas
+  > (`.config-section`, `.template-section`, `.order-search-section`) y
+  > `enhanceSelect` en sus 3 selects.
 - **HECHO (2026-06-21): bitácora de diagnóstico** (`LOG.JS` + tabla `event_log`).
   NO es un audit log para mirar desde la app: es una bitácora REMOTA para
   diagnosticar cuando alguien reporta un error. Captura crashes de JS
