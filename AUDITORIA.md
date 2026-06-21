@@ -44,7 +44,7 @@ Los problemas reales se concentran en **4 frentes**:
 
 | # | Dónde | Hallazgo |
 |---|---|---|
-| C1 | Supabase (ambas apps) | **RLS abierta**: policies `using (true)` (comentario en merger ~8734). Todos los `.eq('ns', …)` / `.eq('id', ns)` son filtros cliente. Con la anon key (pública por diseño en cada vendedor) se puede leer/escribir `catalog`, `orders`, `backups`, etc. de cualquier `ns`. **Fix**: políticas RLS reales por `ns` (con Supabase Auth o claims), o al menos separar proyecto/keys por tienda y documentar rotación. |
+| C1 | ~~Supabase (ambas apps)~~ | ✅ **RESUELTO (2026-06-13)**: implementado acceso por persona con Supabase Auth + RLS real por rol. Cada usuario tiene email/contraseña y un rol (`central`/`vendor`) en la tabla `user_stores`; las policies consultan ese rol con el helper `store_role()`. Sin sesión iniciada la anon key ya no abre la base. Verificado por rol (anon no ve nada; vendedor solo lee catálogo e inserta pedidos; central ve todo). Ver `schema.sql` (sección AUTH + RLS) y la sección "Conexión con la nube" de los CLAUDE.md. |
 | C2 | merger `UI.JS` ~5537; vendedor `UI.JS` 3927, 4073 | **XSS en `onclick`**: patrón `safeKey = s._key.replace(/'/g, "\\'")` interpolado en `onclick="fn('${safeKey}')"`. Una clave tipo `x\');alert(1);//` rompe el string (el escape de comilla simple no cubre backslash ni contexto HTML). Los datos vienen de la nube (catálogo/pedidos) → ejecutable en todos los dispositivos. **Fix**: eliminar onclick inline → `data-key` + event delegation, o escapar para contexto HTML+JS completo. |
 | C3 | merger `ORDERS.JS` 9647–9780 | **Confirmación de pedido no atómica**: el guard `status === 'confirmado'` es solo en memoria del tab. Dos pestañas con el mismo pedido pendiente pueden descontar stock dos veces; y si `saveMerged()` falla (cuota), el pedido queda `confirmado` sin que el descuento persista. **Fix**: lock cross-tab (BroadcastChannel/StorageEvent), y marcar `confirmado` solo después de que ambos saves se completen (patrón snapshot → descuento → marca). |
 | C4 | merger `STORE.JS` 3329–3343; vendedor global | **Sin `beforeunload`**: el flush de IndexedDB es debounced 300 ms y `flushNow()` solo corre en `visibilitychange`/`online`; las promesas de `flushNow()` ni se esperan. Cerrar la pestaña justo después de confirmar/enviar puede perder la escritura. **Fix**: `window.addEventListener('beforeunload', () => Store.flushNow())` en merger; flush de `saveOrders()`/`saveCurrentOrder()` en vendedor. |
@@ -80,7 +80,13 @@ Los problemas reales se concentran en **4 frentes**:
 
 - Multiplicadores de rubro aceptan 0/negativos → precios $0 o negativos exportables (merger `PRICES.JS` ~6426).
 - LWW de `SYNC_ROWS` sin tiebreaker ante colisión de `updated_at` (agregar `device_id`).
-- Sin rate-limit en `pullCatalog`/`flushOrderQueue` (spam de botón = hammering a Supabase).
+- ~~Sin rate-limit en `pullCatalog`/`flushOrderQueue` (spam de botón = hammering
+  a Supabase).~~ ✅ **RESUELTO (2026-06-18)**: `flushOrderQueue` ya tenía el flag
+  `_flushingQueue`; la central ya tenía `_pullOrdersBusy` en `pullOrders`. Se
+  agregó el mismo guard a `pullCatalog` del vendedor (flag `_pullingCatalog` +
+  cooldown de 1.5 s), que era el único sin protección: una sola bajada a la vez
+  y un respiro corto absorben el spam de botón y las ráfagas de Realtime. Cierra
+  también M8 (anti-concurrencia en `pullOrders`/`pullCatalog`).
 - `READE.md` (typo) en vendedor no queda excluido por `.assetsignore` → se publica como asset.
 - `console.log` de migraciones incluye datos de usuario (menor).
 - Sin dedupe por hash de contenido cuando un vendedor re-exporta el mismo pedido con otro `order_id`.
@@ -111,9 +117,18 @@ primero lo que puede causar pérdida de plata o de datos.
       armar pedido → enviar → importar → confirmar → verificar descuento.
 
 ### Fase 1 — Seguridad (1–2 días)
-- [ ] **C1**: diseñar e implementar RLS real por `ns` (mínimo viable:
-      Supabase Auth anónima + claim de tienda, o un proyecto/clave por
-      tienda). Documentar rotación de anon key.
+- [x] **C1** ✅ (2026-06-13): RLS real por rol con Supabase Auth + tabla
+      `user_stores` + helper `store_role()`. Login por persona en ambas apps.
+      Pendiente opcional: rotar la anon key (con RLS estricta ya no sirve sola,
+      pero rotarla limpia el legado; obliga a re-pegar la key en cada teléfono).
+- [x] **Captcha de login (anti fuerza bruta)** ✅ (2026-06-19): Cloudflare
+      Turnstile en las dos pantallas de login de ambas apps; el `captchaToken`
+      viaja en `signInWithPassword` y Supabase lo valida con la clave secreta
+      (`security_captcha_enabled=true`, provider `turnstile`). Verificado:
+      siteverify acepta el secreto; el endpoint de login rechaza sin token
+      (`captcha_failed`). Kill-switch server-side instantáneo. La Site Key es
+      pública (en el HTML); el secreto vive solo en Supabase. Sigue pendiente
+      (opcional) rotar la anon key, que requiere re-pegarla en cada teléfono.
 - [ ] **C2**: barrer todos los `onclick="...('${...}')"` de ambas apps y
       migrar a `data-*` + event delegation (grep: `onclick=\"` con template
       literal).
@@ -232,14 +247,51 @@ primero lo que puede causar pérdida de plata o de datos.
 
 ### ⏳ Pendiente (requiere acción manual o decisión de producto)
 
-1. **C1 RLS real por `ns`** — el más importante. Requiere Supabase Auth y
-   cambios en el dashboard. El plan está al final de `schema.sql`. Hasta
-   entonces, las policies siguen abiertas (riesgo conocido y aceptado como
-   arranque).
-2. **A5 pineo de CDN + SRI** — este entorno no tiene salida de red a jsdelivr
-   para resolver la versión exacta ni computar los hashes; pinear a ciegas
-   rompería la app. Hay un TODO con instrucciones junto a los `<script>` de
-   ambos `index.html`. Alternativa superior: vendorear las libs al repo.
+0. ~~**C1b — `user_stores` con RLS APAGADO** (auditoría 2026-06-18)~~ — ✅
+   **RESUELTO (2026-06-18)**: en la base en vivo, `user_stores` (la tabla que
+   gobierna todo el RLS por rol) tenía `relrowsecurity=false` y `anon`/
+   `authenticated` con SELECT/INSERT/UPDATE/DELETE → cualquiera con la anon key
+   podía leer/editar/borrar los roles (escalar a `central` o dejar a todos sin
+   acceso = DoS), esquivando todo el endurecimiento C1. Fix aplicado:
+   `enable row level security` + `revoke all ... from anon, authenticated`
+   (defensa en profundidad; `store_role()` es SECURITY DEFINER y sigue
+   funcionando). `schema.sql` actualizado en ambos repos para que no se
+   re-desincronice. Verificado en vivo: RLS=true, grants vacíos, helper ve las
+   6 filas.
+0b. ~~**Tabla legacy `workspace`**~~ — ✅ **RESUELTO (2026-06-18)**: era el
+   mecanismo viejo de "central compartida" (blob de estado completo),
+   reemplazado por `SYNC_ROWS.JS` (sync fila-por-fila). Ya no la usa ninguna
+   query del código (solo quedaban comentarios históricos). Se respaldó la
+   única fila (rev 107, 30-may) y se hizo `drop table workspace`. Verificado:
+   ya no existe.
+0c. ~~**Sobrescritura del catálogo entero (A-3)**~~ — ✅ **RESUELTO
+   (2026-06-18)**: `publishCatalog` ahora tiene un guard anti-wipe que espeja
+   al del vendedor (`applyVendorData`): si el catálogo a publicar es una caída
+   drástica (antes ≥20 productos y el nuevo < la mitad) frente al último
+   publicado, en manual pide confirmación (mostrando los números) y en
+   automático NO publica (queda pendiente + aviso en `scStatus`). En manual
+   también compara contra el conteo REAL en la nube, así un dispositivo con
+   estado viejo no pisa un catálogo bueno. El conteo publicado se recuerda en
+   `Store('catalog_last_pub_count')`. El gran reset (publica vacío a propósito)
+   no se ve afectado: va por otra vía (upsert directo).
+0d. ~~**Payload sin validar del lado servidor (M-1 / F5)**~~ — ✅ **RESUELTO
+   (2026-06-18)**: las policies RLS controlaban QUIÉN escribe pero no QUÉ. Se
+   agregaron CHECK constraints en las tablas vendor-writable: `orders.payload`
+   ≤ 1 MB (`octet_length(payload::text)`), `orders.vendor`/`orders.client` y
+   `clients.name`/`clients.vendor` ≤ 200 caracteres, y `clients.list` ∈
+   (act,dist,vip). Topes generosos (un pedido real pesa ~4 KB). Aplicado en la
+   base y agregado a `schema.sql` (ambos repos), idempotente (drop+add).
+   Verificado con prueba negativa: una `list` inválida es rechazada (23514) y
+   la fila no queda.
+1. ~~**C1 RLS real por `ns`**~~ — ✅ **RESUELTO (2026-06-13)**: acceso por
+   persona con Supabase Auth + RLS por rol (`user_stores` + `store_role()`).
+   Login por persona en ambas apps; verificado por rol. Ver `schema.sql`.
+   Opcional pendiente: rotar la anon key (limpieza de legado).
+2. ~~**A5 pineo de CDN + SRI**~~ — **RESUELTO (verificado 2026-06-12)**: los
+   `<script>` de ambas apps ya están pineados a versiones exactas con
+   `integrity` + `crossorigin` (supabase-js 2.108.1, xlsx 0.18.5, jspdf 2.5.1).
+   Vendorear las libs al repo queda como mejora opcional, ya sin urgencia de
+   seguridad.
 3. **A4 precio obsoleto en pedido en curso** — mitigado de fábrica (el modo
    auto no pisa un pedido en curso); el snapshot `_priceSyncedAt` +
    revalidación queda como mejora de producto.

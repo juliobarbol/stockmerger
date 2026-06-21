@@ -8,6 +8,30 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StockMerger">
 <meta name="theme-color" content="#0d0f14">
+<script>
+/* Tema claro/oscuro: se aplica antes de pintar para evitar parpadeo. */
+(function(){
+  try{
+    var KEY='ui_theme';
+    window.applyTheme=function(t){
+      if(t){try{localStorage.setItem(KEY,t);}catch(e){}}
+      else{try{t=localStorage.getItem(KEY);}catch(e){} t=t||'dark';}
+      document.documentElement.setAttribute('data-theme',t);
+      var m=document.querySelector('meta[name="theme-color"]');
+      if(m)m.setAttribute('content',t==='light'?'#eef1f6':'#0d0f14');
+      var b=document.getElementById('themeToggleBtn');
+      if(b)b.textContent=(t==='light'?'🌙 Modo oscuro':'☀️ Modo claro');
+      return t;
+    };
+    window.toggleTheme=function(){
+      var cur=document.documentElement.getAttribute('data-theme')||'dark';
+      window.applyTheme(cur==='light'?'dark':'light');
+    };
+    window.applyTheme();
+    document.addEventListener('DOMContentLoaded',function(){window.applyTheme();});
+  }catch(e){}
+})();
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>StockMerger</title>
@@ -32,6 +56,12 @@
   --accent:#00e5a0;--accent2:#3b82f6;--warn:#f59e0b;--text:#e2e8f0;
   --muted:#64748b;--red:#f87171;--tap:48px;
 }
+html[data-theme="light"]{
+  --bg:#eef1f6;--surface:#ffffff;--surface2:#f1f4f9;--border:#d4dae6;
+  --accent:#00a878;--accent2:#2563eb;--warn:#b45309;--text:#1b2533;
+  --muted:#5d6b7e;--red:#dc2626;
+}
+html[data-theme="light"] select option{background:#fff}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;min-height:100dvh;overscroll-behavior:none;padding-bottom:0}
 .page{display:none;flex-direction:column;min-height:100vh;min-height:100dvh}
@@ -67,6 +97,8 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .home-hero h1{font-size:clamp(1.9rem,7vw,2.8rem);font-weight:800;letter-spacing:-.03em;line-height:1.05}
 .home-hero h1 span{color:var(--accent)}
 .home-hero p{color:var(--muted);font-size:.78rem;margin-top:.5rem;font-family:'DM Mono',monospace}
+.theme-toggle{margin-top:.9rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:.7rem;padding:.45rem .9rem;border-radius:999px;cursor:pointer;min-height:var(--tap);-webkit-tap-highlight-color:transparent}
+.theme-toggle:active{background:var(--surface)}
 
 /* UPLOAD */
 .upload-section{padding:1rem;display:flex;flex-direction:column;gap:.75rem}
@@ -2335,6 +2367,24 @@ tr.row-lowstock td{background:#f59e0b08}
 </head>
 <body>
 
+<!-- ══ Pantalla de login (gate de acceso) ══
+     Tapa la app hasta que haya sesión iniciada. Solo aparece si la nube está
+     configurada y no hay sesión guardada. Una vez logueado, persiste y la app
+     funciona también offline (ver authGateRefresh en SUPABASE.JS). -->
+<div id="authGate" style="display:none;position:fixed;inset:0;z-index:99999;background:#0b0f14;flex-direction:column;align-items:center;justify-content:center;padding:1.5rem">
+  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:.7rem;text-align:center">
+    <div style="font-size:2.4rem">🔒</div>
+    <h2 style="margin:0;font-size:1.25rem;color:#e6edf3">Iniciar sesión</h2>
+    <p style="margin:0 0 .3rem;font-size:.8rem;color:#8b98a5">Ingresá con tu usuario para usar la app.</p>
+    <input type="email" id="gateEmail" placeholder="Email" autocomplete="email" style="padding:.7rem;border-radius:8px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font-size:.95rem">
+    <input type="password" id="gatePass" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')authGateLogin()" style="padding:.7rem;border-radius:8px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font-size:.95rem">
+    <div id="gateCaptcha" style="display:flex;justify-content:center;min-height:1px"></div>
+    <button onclick="authGateLogin()" style="padding:.75rem;border-radius:8px;border:none;background:#2ea043;color:#fff;font-size:.95rem;font-weight:600;cursor:pointer">🔑 Entrar</button>
+    <div id="gateStatus" style="min-height:1.1rem;font-size:.78rem;color:#f0883e"></div>
+    <button onclick="authGateConfig()" style="background:none;border:none;color:#8b98a5;font-size:.74rem;text-decoration:underline;cursor:pointer">⚙ Configurar conexión</button>
+  </div>
+</div>
+
 <!-- ══ TAB BAR ══ -->
 <nav class="tab-bar" id="tabBar">
   <button class="tab-btn active" id="tab-archivos" onclick="switchTab('archivos')">
@@ -2370,6 +2420,7 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="home-hero">
       <h1>OP-BAYRES<br><span>CENTRAL</span></h1>
       <p>subí el Excel del stock → cargá o sumá un ingreso</p>
+      <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" type="button">☀️ Modo claro</button>
     </div>
     <div class="upload-section">
       <div class="upload-card" id="cardA" ondragover="drag(event,'A')" ondragleave="undrag('A')" ondrop="drop(event,'A')">
@@ -2487,12 +2538,39 @@ tr.row-lowstock td{background:#f59e0b08}
         Si no hay internet, seguí usando el botón de arriba.
       </p>
       <div class="sb-config">
-        <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
-        <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
-        <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
-        <div class="sb-btn-row">
-          <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
-          <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+        <!-- Candado anti-miradas: con la nube ya conectada, las claves quedan
+             ocultas detrás de una contraseña (sbLockRefresh, SUPABASE.JS). -->
+        <div id="sbLockBox" style="display:none">
+          <p style="font-size:.7rem;color:var(--muted);margin:0 0 .45rem">
+            ✅ Conectado a la nube — tienda «<span id="sbLockNs"></span>» ·
+            clave guardada (termina en <span id="sbLockTail"></span>)
+          </p>
+          <button class="btn-backup" onclick="sbUnlockConfig()" style="width:100%;padding:.5rem;justify-content:center">
+            🔒 Ver / editar conexión
+          </button>
+        </div>
+        <div id="sbLoginBox" style="display:none;flex-direction:column;gap:.4rem">
+          <div id="sbSessionInfo" style="display:none">
+            <p style="font-size:.7rem;color:var(--muted);margin:0 0 .3rem">👤 Sesión activa: <b><span id="sbSessionEmail"></span></b></p>
+            <button class="btn-backup" onclick="sbLogout()" style="width:100%;padding:.5rem;justify-content:center">Cerrar sesión</button>
+          </div>
+          <div id="sbLoginForm" style="display:none;flex-direction:column;gap:.4rem">
+            <p style="font-size:.7rem;color:var(--muted);margin:0 0 .2rem">Ingresá con tu usuario para sincronizar:</p>
+            <input type="email" id="sbLoginEmail" placeholder="Email" autocomplete="email">
+            <input type="password" id="sbLoginPass" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')sbLogin()">
+            <div id="sbLoginCaptcha" style="display:flex;justify-content:center;min-height:1px"></div>
+            <button class="btn-backup" onclick="sbLogin()" style="padding:.5rem;justify-content:center">🔑 Iniciar sesión</button>
+          </div>
+        </div>
+        <div id="sbConfigBox" style="display:flex;flex-direction:column;gap:.4rem">
+          <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
+          <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
+          <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
+          <div class="sb-btn-row">
+            <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
+            <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+            <button class="btn-backup" id="sbHideBtn" onclick="sbHideConfig()" style="display:none">🔒 Ocultar</button>
+          </div>
         </div>
         <button class="btn-backup btn-backup-primary" onclick="publishCatalog()" style="width:100%;padding:.6rem;justify-content:center">
           ☁️⬆ Publicar catálogo a la nube
@@ -4222,6 +4300,9 @@ function addIngestHistoryEntry(entry) {
   const history = loadIngestHistory();
   history.push(entry);
   saveIngestHistory(history);
+  if (typeof addBreadcrumb === 'function') {
+    addBreadcrumb('stock.ingest', { mode: entry.mode, products: entry.productCount, units: entry.totalUnits, file: entry.filename });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -9220,7 +9301,7 @@ function exportForVendor(list) {
 // ════════════════════════════════════════════════════════════════════
 
 const GRAN_RESET_PASS = 'opbayresgranreset';
-const GRAN_RESET_KEEP = ['sb_config', 'docconfig'];
+const GRAN_RESET_KEEP = ['sb_config', 'docconfig', 'sb-dxntcbssxjxtxznkdsot-auth-token', 'event_log_queue'];
 
 async function granReset() {
   const pass = prompt(
@@ -9247,6 +9328,11 @@ async function granReset() {
   msg += '\nSe conservan la conexión a la nube y los datos del emisor.\n' +
     'Antes de borrar se descarga un backup completo de seguridad.\n\n¿Borrar todo?';
   if (!confirm(msg)) return;
+
+  // 0. Registrar el gran reset en la bitácora ANTES de borrar (y subirlo ya,
+  //    mientras todavía hay conexión). La cola se conserva (GRAN_RESET_KEEP).
+  logEvent('gran_reset', { severity: 'warn', summary: 'Gran reset ejecutado (borrado total)', meta: { cloud } });
+  try { if (cloud) await _logFlush(); } catch (e) {}
 
   // 1. Backup de seguridad (best-effort: si no hay nada que exportar, sigue)
   try { exportBackup(false); } catch (e) { console.warn('granReset backup:', e); }
@@ -9685,7 +9771,11 @@ function scClient() {
 
   try {
     _sbClient = window.supabase.createClient(c.url, c.anonKey, {
-      auth: { persistSession: false },
+      auth: {
+        persistSession: true,        // guarda la sesión en localStorage (login por persona)
+        autoRefreshToken: true,      // renueva el token solo cuando hay internet
+        storageKey: SB_AUTH_KEY,     // sb-<ref>-auth-token (lo lee el gate)
+      },
     });
     _sbClientKey = key;
     return _sbClient;
@@ -9715,7 +9805,222 @@ function scSaveConfigFromUI() {
   scSaveConfig({ url, anonKey, ns });
   scStatus('Configuración guardada ✓', 'ok');
   toast('Configuración de nube guardada ✓', 'ok');
+  _sbCfgUnlocked = false;   // recién guardada → vuelve a quedar oculta
+  sbLockRefresh();
   if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+}
+
+// ── Candado anti-miradas de la config de nube ──
+// Con la nube ya conectada, la sección de URL/key/tienda se reemplaza por un
+// resumen y solo se abre con contraseña. Igual que la del gran reset, es un
+// guard contra miradas ajenas en la pantalla, NO seguridad real (el código
+// es público); la protección de fondo son las policies de la base.
+const SB_CFG_PASS = 'opbayressincnube';
+let _sbCfgUnlocked = false;
+
+function sbLockRefresh() {
+  const lock     = document.getElementById('sbLockBox');
+  const box      = document.getElementById('sbConfigBox');
+  const loginBox = document.getElementById('sbLoginBox');
+  if (!lock || !box) return;
+  const c = scGetConfig();
+  const hasCfg = !!(c.url && c.anonKey);
+  const locked = hasCfg && !_sbCfgUnlocked;
+  lock.style.display = locked ? '' : 'none';
+  box.style.display  = locked ? 'none' : 'flex';
+  const hideBtn = document.getElementById('sbHideBtn');
+  if (hideBtn) hideBtn.style.display = (!locked && hasCfg) ? '' : 'none';
+  if (locked) {
+    const ns   = document.getElementById('sbLockNs');
+    const tail = document.getElementById('sbLockTail');
+    if (ns)   ns.textContent   = c.ns || 'default';
+    if (tail) tail.textContent = '…' + c.anonKey.slice(-4);
+  }
+  if (loginBox) {
+    loginBox.style.display = (hasCfg && locked) ? 'flex' : 'none';
+    const sess        = _sbGetSession();
+    const loginForm   = document.getElementById('sbLoginForm');
+    const sessionInfo = document.getElementById('sbSessionInfo');
+    if (loginForm)   loginForm.style.display   = sess ? 'none' : 'flex';
+    if (sessionInfo) sessionInfo.style.display = sess ? ''     : 'none';
+    if (!sess) _ensureCaptcha('sbLoginCaptcha');
+    const emailEl = document.getElementById('sbSessionEmail');
+    if (emailEl && sess) emailEl.textContent = sess.user?.email || '';
+  }
+}
+
+function sbUnlockConfig() {
+  const pass = prompt('Contraseña para ver/editar la conexión:');
+  if (pass === null) return;
+  if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
+  _sbCfgUnlocked = true;
+  sbLockRefresh();
+}
+
+function sbHideConfig() {
+  _sbCfgUnlocked = false;
+  sbLockRefresh();
+}
+
+// ── Login / sesión de usuario ──
+const SB_AUTH_KEY = 'sb-dxntcbssxjxtxznkdsot-auth-token';
+let _authGateBypass = false;   // true cuando se abre la config desde el gate
+
+// Sesión "válida ahora" (para el resumen): exige que el token no esté vencido.
+function _sbGetSession() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s?.user) return null;
+    if (s.expires_at && (Date.now() / 1000) > s.expires_at) return null;
+    return s;
+  } catch { return null; }
+}
+// ¿Hay una sesión GUARDADA? (sin exigir token vigente) — sirve para el gate:
+// offline el token puede estar vencido pero la persona ya se identificó; el
+// refresh token deja que supabase-js lo renueve al recuperar internet.
+function _sbHasStoredSession() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    return !!(s && s.user && s.refresh_token);
+  } catch { return false; }
+}
+// ── Captcha de login (auditoría F2): Cloudflare Turnstile ──
+// Protege el inicio de sesión contra fuerza bruta. El token viaja a Supabase
+// en signInWithPassword({ options:{ captchaToken } }); Supabase lo valida con
+// la clave SECRETA (guardada SOLO en el server, nunca acá). La Site Key es
+// pública por diseño. Si el script no carga (sin internet / bloqueado), el
+// login sigue intentándose sin token: con el captcha apagado en el server no
+// molesta, y si está prendido Supabase devuelve un error claro que mostramos.
+const TURNSTILE_SITEKEY = '0x4AAAAAADn5nDWSnFUczyWP';
+let _tsLoading = null;
+function _loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(true);
+  if (_tsLoading) return _tsLoading;
+  _tsLoading = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true; s.defer = true;
+    s.onload  = () => resolve(true);
+    s.onerror = () => { _tsLoading = null; resolve(false); };
+    document.head.appendChild(s);
+  });
+  return _tsLoading;
+}
+async function _ensureCaptcha(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el || el.dataset.tsId) return;          // sin contenedor o ya renderizado
+  const ok = await _loadTurnstile();
+  if (!ok || !window.turnstile || el.dataset.tsId) return;
+  try {
+    const id = window.turnstile.render(el, {
+      sitekey: TURNSTILE_SITEKEY,
+      callback:           (t) => { el._captchaToken = t;  },
+      'expired-callback': ()  => { el._captchaToken = ''; },
+      'error-callback':   ()  => { el._captchaToken = ''; },
+    });
+    el.dataset.tsId = id;
+  } catch (e) { /* si falla el render, el login sigue sin token */ }
+}
+function _captchaToken(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return '';
+  if (el._captchaToken) return el._captchaToken;
+  try {
+    if (window.turnstile && el.dataset.tsId)
+      return window.turnstile.getResponse(el.dataset.tsId) || '';
+  } catch (e) {}
+  return '';
+}
+function _captchaReset(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el._captchaToken = '';
+  try { if (window.turnstile && el.dataset.tsId) window.turnstile.reset(el.dataset.tsId); } catch (e) {}
+}
+
+// Login compartido por el gate y por el formulario de la sección de conexión.
+async function _sbDoLogin(email, pass, captchaToken) {
+  if (!email || !pass) return { ok:false, msg:'Ingresá email y contraseña.' };
+  if (typeof scLibReady === 'function' && !scLibReady())
+    return { ok:false, msg:'La nube no cargó (¿sin internet?). Conectate e intentá de nuevo.' };
+  const client = scClient();
+  if (!client) return { ok:false, msg:'Primero configurá la conexión a la nube.' };
+  const options = captchaToken ? { captchaToken } : undefined;
+  const { error } = await client.auth.signInWithPassword({ email, password: pass, options });
+  if (error) {
+    const m = (error.message || '').toLowerCase();
+    if (m.includes('captcha'))
+      return { ok:false, msg:'Completá la verificación "no soy un robot" e intentá de nuevo.' };
+    return { ok:false, msg:'No se pudo iniciar sesión. Verificá email y contraseña.' };
+  }
+  addBreadcrumb('login', { email });
+  try { setTimeout(_logFlush, 1000); } catch (e) {}   // subir lo que haya quedado en cola
+  return { ok:true };
+}
+
+// Gate de acceso: tapa la app si la nube está configurada y no hay sesión.
+function authGateRefresh() {
+  const gate = document.getElementById('authGate');
+  if (!gate) return;
+  if (_authGateBypass) { gate.style.display = 'none'; document.body.style.overflow = ''; return; }
+  const c = scGetConfig();
+  const cloudOn = !!(c.url && c.anonKey);
+  const show = cloudOn && !_sbHasStoredSession();
+  gate.style.display = show ? 'flex' : 'none';
+  document.body.style.overflow = show ? 'hidden' : '';
+  if (show) _ensureCaptcha('gateCaptcha');
+}
+async function authGateLogin() {
+  const email = document.getElementById('gateEmail')?.value?.trim();
+  const pass  = document.getElementById('gatePass')?.value;
+  const st = document.getElementById('gateStatus');
+  if (st) st.textContent = 'Iniciando sesión…';
+  const r = await _sbDoLogin(email, pass, _captchaToken('gateCaptcha'));
+  _captchaReset('gateCaptcha');
+  if (!r.ok) { if (st) st.textContent = r.msg; return; }
+  if (st) st.textContent = '';
+  const p = document.getElementById('gatePass'); if (p) p.value = '';
+  _authGateBypass = false;
+  authGateRefresh();
+  if (typeof sbLockRefresh === 'function') sbLockRefresh();
+  if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+}
+// Escape para configurar la conexión (URL/key) cuando aún no hay con qué
+// loguearse. Protegido por la contraseña del candado.
+function authGateConfig() {
+  const pass = prompt('Contraseña para configurar la conexión:');
+  if (pass === null) return;
+  if (pass.trim() !== SB_CFG_PASS) { alert('Contraseña incorrecta.'); return; }
+  _authGateBypass = true;
+  _sbCfgUnlocked = true;
+  authGateRefresh();
+  if (typeof sbLockRefresh === 'function') sbLockRefresh();
+  const box = document.getElementById('sbConfigBox');
+  if (box && box.scrollIntoView) box.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+async function sbLogin() {
+  const email = document.getElementById('sbLoginEmail')?.value?.trim();
+  const pass  = document.getElementById('sbLoginPass')?.value;
+  scStatus('Iniciando sesión…', '');
+  const r = await _sbDoLogin(email, pass, _captchaToken('sbLoginCaptcha'));
+  _captchaReset('sbLoginCaptcha');
+  if (!r.ok) { scStatus(r.msg, 'err'); return; }
+  scStatus('Sesión iniciada ✓', 'ok');
+  authGateRefresh();
+  sbLockRefresh();
+}
+async function sbLogout() {
+  const client = scClient();
+  if (client) await client.auth.signOut();
+  scStatus('Sesión cerrada.', '');
+  _authGateBypass = false;
+  authGateRefresh();
+  sbLockRefresh();
 }
 
 // ── Probar conexión ──
@@ -9773,6 +10078,27 @@ function _markCatalogPublishPending() {
   }
 }
 
+// ── Guard anti-wipe del catálogo (A-3) ──
+// Evita pisar un catálogo bueno con uno drásticamente más chico (p. ej. tras
+// un import malo, un "resetear stock" a medio hacer, o un dispositivo con
+// estado viejo de "central compartida"). Mismo criterio que el guard del
+// vendedor (applyVendorData): caída drástica = antes ≥20 productos y el nuevo
+// trae menos de la mitad. En manual pide confirmación; en auto NO publica y
+// avisa (queda pendiente para publicar a mano tras revisar).
+const CATALOG_DROP_MIN   = 20;   // umbral mínimo para que el guard actúe
+const CATALOG_DROP_RATIO = 0.5;  // "menos de la mitad" del publicado
+
+function _lastPublishedCount() {
+  const v = parseInt(Store.get('catalog_last_pub_count'), 10);
+  return isNaN(v) ? null : v;
+}
+function _setLastPublishedCount(n) {
+  try { Store.set('catalog_last_pub_count', String(n)); } catch (e) {}
+}
+function _isDrasticCatalogDrop(prev, next) {
+  return prev != null && prev >= CATALOG_DROP_MIN && next < prev * CATALOG_DROP_RATIO;
+}
+
 async function publishCatalog(opts = {}) {
   // Modo auto: disparado en segundo plano por un cambio de stock. Silencioso
   // (sin toasts ni status ruidoso); si algo falla, queda pendiente y se
@@ -9820,6 +10146,38 @@ async function publishCatalog(opts = {}) {
   const c = scGetConfig();
   if (!auto) scStatus('Publicando a la nube…', '');
   try {
+    // ── Guard anti-wipe: comparar el conteo nuevo contra el último publicado ──
+    const nuevoCount = built.count || 0;
+    let prev = _lastPublishedCount();
+    if (!auto) {
+      // En manual, además del recordado local, chequeamos el conteo REAL en la
+      // nube (así un dispositivo con estado viejo tampoco pisa un catálogo bueno).
+      try {
+        const { data: cur } = await client
+          .from('catalog').select('payload').eq('id', c.ns).maybeSingle();
+        const cloudCount = (cur && cur.payload && Array.isArray(cur.payload.stock))
+          ? cur.payload.stock.length : null;
+        if (cloudCount != null) prev = (prev == null) ? cloudCount : Math.max(prev, cloudCount);
+      } catch (e) { /* sin red o sin fila: seguimos con el recordado local */ }
+    }
+    if (_isDrasticCatalogDrop(prev, nuevoCount)) {
+      if (auto) {
+        // Automático: NO pisar. Avisar y dejar pendiente para revisión manual.
+        _catalogPublishPending = true;
+        scStatus(`⚠️ Publicación automática frenada: el catálogo bajó de ${prev} a ${nuevoCount} productos. ` +
+                 `Revisá el stock y publicá a mano si es correcto.`, 'err');
+        return;
+      }
+      if (!confirm(
+        `⚠️ Vas a publicar ${nuevoCount} producto(s), pero el catálogo publicado tiene ${prev}.\n\n` +
+        `Esto reemplaza el catálogo de TODOS los vendedores. Si fue un error (import a medias, ` +
+        `stock sin cargar), cancelá y revisá el stock.\n\n¿Publicar igual?`
+      )) {
+        scStatus('Publicación cancelada (caída inusual de productos).', '');
+        return;
+      }
+    }
+
     const { error } = await client
       .from('catalog')
       .upsert({
@@ -9830,6 +10188,7 @@ async function publishCatalog(opts = {}) {
 
     if (error) {
       console.error('publishCatalog error:', error);
+      logEvent('catalog.publish.fail', { severity: 'error', summary: 'Error al publicar catálogo: ' + (error.message || '?'), error, meta: { auto, count: built.count || 0 } });
       if (auto) {
         _markCatalogPublishPending();
       } else {
@@ -9842,6 +10201,8 @@ async function publishCatalog(opts = {}) {
 
     // Éxito: ya no hay nada pendiente.
     _catalogPublishPending = false;
+    _setLastPublishedCount(built.count || 0); // recordar para el guard anti-wipe
+    addBreadcrumb('catalog.publish', { count: built.count || 0, auto });
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     if (auto) {
@@ -9854,6 +10215,7 @@ async function publishCatalog(opts = {}) {
     }
   } catch (e) {
     console.error('publishCatalog exception:', e);
+    logEvent('catalog.publish.fail', { severity: 'error', summary: 'Excepción al publicar catálogo', error: e, meta: { auto, count: built.count || 0 } });
     if (auto) {
       _markCatalogPublishPending();
     } else {
@@ -9982,6 +10344,7 @@ async function _doPullOrders(opts = {}) {
     const { data, error } = await q;
     if (error) {
       console.error('pullOrders error:', error);
+      logEvent('orders.pull.fail', { severity: 'error', summary: 'Error al traer pedidos: ' + (error.message || '?'), error, meta: { silent } });
       toast('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       scStatus('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       return;
@@ -10034,6 +10397,7 @@ async function _doPullOrders(opts = {}) {
     scStatus(msg, 'ok');
   } catch (e) {
     console.error('pullOrders exception:', e);
+    logEvent('orders.pull.fail', { severity: 'error', summary: 'Excepción al traer pedidos', error: e, meta: { silent } });
     toast('Error de red al traer pedidos: ' + (e.message || 'sin conexión'), 'err');
     scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
   }
@@ -10048,6 +10412,8 @@ function scInitUI() {
   if (u) u.value = c.url;
   if (k) k.value = c.anonKey;
   if (n) n.value = c.ns;
+  sbLockRefresh();
+  authGateRefresh();
 
   if (!scLibReady()) {
     scStatus('Modo offline: la nube no cargó. La app funciona igual; usá archivos.', '');
@@ -10073,6 +10439,292 @@ window.addEventListener('online', retryCatalogPublishIfPending);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') retryCatalogPublishIfPending();
 });
+
+
+// ════════════════════════════════════════════════════════════════════
+// LOG.JS — StockMerger — bitácora de diagnóstico (errores + contexto)
+// ════════════════════════════════════════════════════════════════════
+//
+// NO es un log visible para el usuario: es una bitácora REMOTA para
+// diagnosticar cuando alguien reporta un error. Captura los crashes de JS
+// (window.onerror / unhandledrejection) y los fallos de operaciones
+// riesgosas, con stack, contexto del dispositivo y "migas de pan" (las
+// últimas acciones antes del error). Cada error le muestra al usuario un
+// código corto (ref) para que lo cite al avisar; nosotros lo buscamos en la
+// tabla `event_log` de Supabase por la Management API.
+//
+// Best-effort total: NUNCA tira excepción ni rompe la app. Si no hay nube,
+// no hace nada (modo file-only intacto). Si hay nube pero falla la subida
+// (offline / sin sesión), el evento queda en una cola local y se reintenta
+// al volver la conexión (igual que la cola de pedidos).
+// ════════════════════════════════════════════════════════════════════
+
+const LOG_APP       = 'merger';   // 'merger' | 'vendor'
+const LOG_ROLE      = 'central';  // rol fijo de esta app
+const LOG_QUEUE_KEY = 'event_log_queue';
+const LOG_QUEUE_MAX = 200;        // tope de la cola local (no crece sin freno)
+const LOG_CRUMB_MAX = 25;         // migas de pan en memoria
+
+let _logCrumbs    = [];           // ring buffer de acciones recientes (en memoria)
+let _logSuppress  = false;        // anti-recursión: no loguear errores del propio logger
+let _logSwName    = '';           // nombre del cache del SW (≈ versión publicada)
+let _logFlushing  = false;        // evita subidas solapadas
+let _logLastToast = 0;            // throttle del aviso al usuario
+const _logRecent  = Object.create(null); // dedupe de errores idénticos
+
+// Nombre del cache del SW = proxy de la versión publicada (se actualiza solo
+// en cada deploy). Se lee una vez, async, al cargar.
+try {
+  if (window.caches && caches.keys) {
+    caches.keys().then(ks => {
+      _logSwName = (ks && (ks.find(k => /stock/i.test(k)) || ks[0])) || '';
+    }).catch(() => {});
+  }
+} catch (e) {}
+
+// Migas de pan: registra una acción significativa. NO se sube sola; viaja
+// adjunta al próximo error para reconstruir qué pasó antes.
+function addBreadcrumb(event, data) {
+  try {
+    _logCrumbs.push({ t: new Date().toISOString(), event, data: (data == null ? null : data) });
+    if (_logCrumbs.length > LOG_CRUMB_MAX) _logCrumbs.shift();
+  } catch (e) {}
+}
+
+// Código de referencia corto (ej. "A3F9") que se le muestra al usuario.
+function _logRef() {
+  try {
+    const n = (window.crypto && crypto.getRandomValues)
+      ? crypto.getRandomValues(new Uint32Array(1))[0]
+      : Math.floor(Math.random() * 0xffffffff);
+    return n.toString(36).toUpperCase().slice(-4).padStart(4, '0');
+  } catch (e) {
+    return String(Date.now()).slice(-4);
+  }
+}
+
+// Usuario guardado (aunque el token esté vencido) para llenar 'actor'.
+function _logStoredUser() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    return raw ? (JSON.parse(raw)?.user || null) : null;
+  } catch (e) { return null; }
+}
+function _logActor() {
+  try {
+    const u = _logStoredUser();
+    if (!u) return '';
+    const m = u.app_metadata || {};
+    if (m.vendor_name || m.vendor_code) {
+      return (m.vendor_name || '') + (m.vendor_code ? ' (' + m.vendor_code + ')' : '');
+    }
+    return u.email || u.id || '';
+  } catch (e) { return ''; }
+}
+
+// Contexto del dispositivo (para diagnosticar sin estar ahí).
+function _logContext() {
+  const ctx = {};
+  try {
+    ctx.ua     = navigator.userAgent;
+    ctx.online = navigator.onLine;
+    ctx.url    = location.href;
+    ctx.lang   = navigator.language;
+    ctx.ver    = _logSwName;
+    if (window.screen) ctx.screen = screen.width + 'x' + screen.height;
+  } catch (e) {}
+  return ctx;
+}
+
+// Normaliza un Error (o lo que sea) a algo serializable, con stack.
+function _logErrInfo(err) {
+  try {
+    if (!err) return null;
+    if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack || '' };
+    if (typeof err === 'object') return { message: err.message || '', code: err.code || '', detail: String(err.detail || ''), stack: err.stack || '' };
+    return { message: String(err) };
+  } catch (e) { return null; }
+}
+
+// ── Cola local durable ──
+function _loadLogQueue() {
+  try {
+    const p = JSON.parse(localStorage.getItem(LOG_QUEUE_KEY) || '[]');
+    return Array.isArray(p) ? p : [];
+  } catch (e) { return []; }
+}
+function _saveLogQueue(q) {
+  try { localStorage.setItem(LOG_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+}
+
+// Registra un evento. opts: { severity, summary, meta, error }.
+// Devuelve el código de referencia (siempre, aunque la subida falle).
+function logEvent(event, opts) {
+  const o = opts || {};
+  const ref = _logRef();
+  try {
+    if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return ref; // sin nube: no registra
+    const meta = Object.assign({}, o.meta || {});
+    meta.ctx = _logContext();
+    meta.breadcrumbs = _logCrumbs.slice(-LOG_CRUMB_MAX);
+    if (o.error) meta.error = _logErrInfo(o.error);
+    const row = {
+      _qid:        ref + '-' + Date.now(),
+      ref,
+      ns:          (scGetConfig() || {}).ns || 'default',
+      app:         LOG_APP,
+      event:       String(event || '').slice(0, 120),
+      severity:    o.severity || 'info',
+      summary:     String(o.summary || '').slice(0, 4000),
+      meta,
+      actor:       _logActor(),
+      role:        LOG_ROLE,
+      occurred_at: new Date().toISOString(),
+    };
+    const q = _loadLogQueue();
+    q.push(row);
+    while (q.length > LOG_QUEUE_MAX) q.shift();   // tope: descarta lo más viejo
+    _saveLogQueue(q);
+    _logFlush();   // intento de subida inmediato (no se espera)
+  } catch (e) {
+    try { console.warn('logEvent:', e && e.message); } catch (_) {}
+  }
+  return ref;
+}
+
+// Sube lo que haya en la cola. Best-effort; requiere nube + sesión guardada.
+async function _logFlush() {
+  if (_logFlushing) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured() || !scLibReady()) return;
+  if (!_sbHasStoredSession()) return;            // sin sesión, RLS rechaza → esperar
+  const client = scClient();
+  if (!client) return;
+  if (!_loadLogQueue().length) return;
+  _logFlushing = true;
+  try {
+    const batch = _loadLogQueue().slice(0, 50);
+    const rows  = batch.map(r => { const x = Object.assign({}, r); delete x._qid; return x; });
+    const { error } = await client.from('event_log').insert(rows);
+    if (error) { try { console.warn('event_log flush:', error.message); } catch (_) {} return; }
+    const done = new Set(batch.map(r => r._qid));
+    _saveLogQueue(_loadLogQueue().filter(r => !done.has(r._qid)));
+  } catch (e) {
+    try { console.warn('event_log flush red:', e && e.message); } catch (_) {}
+  } finally {
+    _logFlushing = false;
+  }
+}
+
+// ── Captura automática de errores no atrapados ──
+// ── Aviso de error al usuario (tarjeta persistente con código + botones) ──
+// Nombre amigable de la app para los mensajes.
+const LOG_APP_NAME = (LOG_APP === 'merger') ? 'Central' : 'Vendedor';
+// Número de aviso por WhatsApp (ofuscado en base64 — el repo es PÚBLICO, esto
+// no es protección real, solo frena al curioso casual / robots simples).
+function _logWaNumber() { try { return atob('NTQ5MzUxNjUwNzY5OQ=='); } catch (e) { return ''; } }
+
+function _logReportText(ref) {
+  return 'App ' + LOG_APP_NAME + ' — error ref: ' + ref + ' — ' + new Date().toLocaleString('es-AR');
+}
+function _logCopy(text, btn) {
+  const done = () => { if (btn) { const o = btn.textContent; btn.textContent = '¡Copiado!'; setTimeout(() => { btn.textContent = o; }, 1500); } };
+  const fb = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta); done();
+    } catch (e) {}
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fb);
+    } else { fb(); }
+  } catch (e) { fb(); }
+}
+
+function _logShowRef(ref) {
+  try {
+    if (!document || !document.body) return;
+    const old = document.getElementById('logErrCard');
+    if (old) old.remove();
+    const text = _logReportText(ref);
+    const card = document.createElement('div');
+    card.id = 'logErrCard';
+    card.setAttribute('style', [
+      'position:fixed','left:12px','right:12px','top:12px','z-index:99999',
+      'max-width:520px','margin:0 auto','background:#1b1014','color:#fde2e2',
+      'border:1px solid #e57373','border-radius:12px','padding:14px',
+      'box-shadow:0 8px 30px rgba(0,0,0,.5)','font-family:inherit','font-size:14px'
+    ].join(';'));
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">' +
+        '<div style="font-weight:700">⚠️ Ocurrió un error</div>' +
+        '<button data-act="close" style="background:none;border:none;color:#fde2e2;font-size:20px;line-height:1;cursor:pointer;padding:0 2px">×</button>' +
+      '</div>' +
+      '<div style="margin:6px 0 2px">Código: <span style="font-weight:700;font-size:18px;letter-spacing:1px">' + ref + '</span></div>' +
+      '<div style="opacity:.8;font-size:12px;margin-bottom:10px">App ' + LOG_APP_NAME + ' · pasale este código a Julio para que lo revise.</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button data-act="wa" style="flex:1;min-width:140px;background:#25d366;color:#04310f;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer">💬 Avisar por WhatsApp</button>' +
+        '<button data-act="copy" style="background:#33252a;color:#fde2e2;border:1px solid #e57373;border-radius:8px;padding:10px 12px;font-weight:600;cursor:pointer">📋 Copiar</button>' +
+      '</div>';
+    card.addEventListener('click', (ev) => {
+      const act = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-act');
+      if (act === 'close') { card.remove(); }
+      else if (act === 'copy') { _logCopy(text, ev.target); }
+      else if (act === 'wa') {
+        const num = _logWaNumber();
+        if (!num) return;
+        const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent('Hola Julio, me salió un error en la app ' + LOG_APP_NAME + '. ' + text);
+        try { window.open(url, '_blank'); } catch (e) { location.href = url; }
+      }
+    });
+    document.body.appendChild(card);
+  } catch (e) {}
+}
+function _logHandleError(event, summary, errObj, extraMeta) {
+  if (_logSuppress) return;
+  _logSuppress = true;
+  try {
+    const sig = event + '|' + (summary || '');     // dedupe: mismo error en <10s no se reencola
+    const now = Date.now();
+    if (_logRecent[sig] && (now - _logRecent[sig]) < 10000) return;
+    _logRecent[sig] = now;
+    const ref = logEvent(event, { severity: 'error', summary, error: errObj, meta: extraMeta });
+    _logShowRef(ref);
+  } catch (e) {
+    try { console.warn('logHandleError:', e && e.message); } catch (_) {}
+  } finally {
+    _logSuppress = false;
+  }
+}
+
+try {
+  window.addEventListener('error', (e) => {
+    if (!e || (!e.message && !e.error)) return;    // ignora errores de carga de recursos
+    _logHandleError('error.uncaught', (e.message) || 'Error', e.error,
+      { source: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    const msg = (r && r.message) ? r.message : (r ? String(r) : 'Promesa rechazada');
+    _logHandleError('error.promise', msg, r, null);
+  });
+  window.addEventListener('online', () => { _logFlush(); });
+} catch (e) {}
+
+// Al cargar el módulo, intentar subir lo que haya quedado de antes.
+try { _logFlush(); } catch (e) {}
+
+// Disparador de PRUEBA (oculto): abrir la app con #logtest en la dirección
+// genera un error inofensivo que recorre el camino real (window.onerror →
+// event_log) y muestra el código de referencia. Sirve para verificar la
+// bitácora de punta a punta. Sin el marcador, no hace nada.
+try {
+  if (/[?#&]logtest/i.test(location.href)) {
+    setTimeout(() => { throw new Error('Prueba de bitácora (logtest) — ' + LOG_APP); }, 1500);
+  }
+} catch (e) {}
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -10297,6 +10949,14 @@ function _unmarkProcessing(localId) {
 // Devuelve { status, order?, warnings? } donde status ∈
 //   'imported' | 'replaced' | 'duplicate' | 'cancelled' | 'empty' | 'no_stock'
 // ════════════════════════════════════════════════════════════════════
+// Topes "anti-absurdo" de un pedido recibido. Espejan los del vendedor
+// (StockVendedor, addToOrder/updateOrderItem). Acá son DEFENSA EN PROFUNDIDAD:
+// un Excel roto o un payload manipulado no debe entrar crudo al descuento de
+// stock. Cantidades fuera de rango se recortan (con aviso); ítems de más se
+// descartan (con aviso). No reemplaza al clamp por stock que hace confirmar.
+const MAX_QTY_PER_LINE    = 100000; // unidades por producto
+const MAX_ITEMS_PER_ORDER = 3000;   // productos distintos por pedido
+
 function ingestVendorOrder(src, opts = {}) {
   const askConfirm = opts.askConfirm !== false;
   const extraWarnings = Array.isArray(opts.extraWarnings) ? opts.extraWarnings : [];
@@ -10315,11 +10975,19 @@ function ingestVendorOrder(src, opts = {}) {
   // del origen) para que Excel y nube se comporten idéntico.
   const items = [];
   const warnings = [];
+  let truncatedItems = false;
   src.items.forEach(raw => {
     const product = String(raw.label || '').trim();
     if (!product) return;
-    const qty = Math.round(parseFloat(raw.qty) || 0);
+    // Tope de ítems distintos: descartar el resto (defensa en profundidad).
+    if (items.length >= MAX_ITEMS_PER_ORDER) { truncatedItems = true; return; }
+    let qty = Math.round(parseFloat(raw.qty) || 0);
     if (qty <= 0) return;
+    // Clampear cantidades fuera de rango (Excel roto / payload manipulado).
+    if (qty > MAX_QTY_PER_LINE) {
+      warnings.push(`"${product}" — cantidad ${qty} fuera de rango, recortada a ${MAX_QTY_PER_LINE}`);
+      qty = MAX_QTY_PER_LINE;
+    }
 
     const key = raw.key || normalize(product);
     const price = parseFloat(raw.price) || 0;
@@ -10350,6 +11018,9 @@ function ingestVendorOrder(src, opts = {}) {
   if (!items.length) {
     if (!opts.silent) toast('El pedido no contiene items válidos.', 'err');
     return { status: 'empty' };
+  }
+  if (truncatedItems) {
+    warnings.push(`El pedido traía más de ${MAX_ITEMS_PER_ORDER} productos: se procesaron los primeros ${MAX_ITEMS_PER_ORDER}`);
   }
 
   // Total a partir de los subtotales (más confiable que el total declarado)
@@ -10680,6 +11351,7 @@ function _doConfirmReceivedOrder(localId) {
   // confirmados a partir de esta versión generan deuda del cliente —
   // los confirmados antes se consideran ya cobrados.
   order.ctaCte      = true;
+  addBreadcrumb('order.confirm', { id: localId, client: order.cliente || order.client || '', items: order.items.length });
 
   saveReceivedOrders();
   saveMerged();
