@@ -2367,6 +2367,13 @@ tr.row-lowstock td{background:#f59e0b08}
    para que la página no se corra de costado (mismo criterio que Precios). El
    wrap conserva la maqueta normal de la tabla (no se desalinean las filas). */
 .caja-tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+/* Selector de cliente in-app del formulario de movimiento (reemplaza el
+   datalist nativo). Desplegable propio, filtrable y con el estilo de la app. */
+.mov-client-results{display:none;margin-top:.35rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:190px;overflow-y:auto}
+.mov-client-results.show{display:block}
+.mcr-item{padding:.6rem .7rem;font-size:.82rem;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)}
+.mcr-item:last-child{border-bottom:none}
+.mcr-item:active{background:var(--surface2)}
 .caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
 .caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
 .caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
@@ -3464,8 +3471,9 @@ tr.row-lowstock td{background:#f59e0b08}
         </div>
         <div id="movClientRow">
           <label>Cliente (la cobranza baja su deuda)</label>
-          <input type="text" id="movClient" list="movClientsDL" placeholder="Nombre del cliente" autocomplete="off">
-          <datalist id="movClientsDL"></datalist>
+          <input type="text" id="movClient" placeholder="Nombre del cliente" autocomplete="off"
+            oninput="movClientFilter(this.value)" onfocus="movClientFilter(this.value)" onblur="movClientBlurLater()">
+          <div id="movClientResults" class="mov-client-results"></div>
         </div>
         <div>
           <label>Cuenta</label>
@@ -14146,8 +14154,7 @@ function openMovForm(cat, client) {
   document.getElementById('movMonto').value = '';
   document.getElementById('movRate').value = state.treasury.rate || state.docConfig?.ultimoTC || '';
   document.getElementById('movConcepto').value = '';
-  document.getElementById('movClientsDL').innerHTML =
-    _movClientNames().map(n => `<option value="${escHtml(n)}"></option>`).join('');
+  movClientHide();
   movFormSync();
   document.getElementById('overlayMov').style.display = 'flex';
 }
@@ -14155,6 +14162,32 @@ function openMovForm(cat, client) {
 function closeMovForm() {
   document.getElementById('overlayMov').style.display = 'none';
 }
+
+// Selector de cliente in-app (reemplaza el datalist nativo, que mostraba los
+// nombres en la tira del teclado de Android): desplegable propio, filtrable,
+// con el estilo de la app. Se llena con _movClientNames().
+function movClientFilter(q) {
+  const box = document.getElementById('movClientResults');
+  if (!box) return;
+  const term = (q || '').trim().toLowerCase();
+  const names = _movClientNames();
+  const matches = term ? names.filter(n => n.toLowerCase().includes(term)) : names;
+  if (!matches.length) { movClientHide(); return; }
+  box.innerHTML = matches.slice(0, 50)
+    .map(n => `<div class="mcr-item" onmousedown="movClientPick('${escJsAttr(n)}')">${escHtml(n)}</div>`)
+    .join('');
+  box.classList.add('show');
+}
+function movClientPick(name) {
+  document.getElementById('movClient').value = name;
+  movClientHide();
+}
+function movClientHide() {
+  const box = document.getElementById('movClientResults');
+  if (box) { box.innerHTML = ''; box.classList.remove('show'); }
+}
+// Pequeño retardo: deja que el onmousedown del ítem dispare antes de ocultar.
+function movClientBlurLater() { setTimeout(movClientHide, 200); }
 
 // Sincroniza visibilidad y ayudas del formulario según tipo/cuenta/monto.
 function movFormSync() {
