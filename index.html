@@ -285,7 +285,10 @@ tr.row-lowstock td{background:#f59e0b08}
 .btn-dl-alert:active { border-color: var(--red); color: var(--red); }
 
 /* BACKUP SECTION */
-.backup-section{padding:.75rem 1rem 1.5rem;border-top:1px solid var(--border);margin-top:.25rem}
+/* Estilo DaisyUI (pestaña Archivos): cada sección de config es una "card"
+   limpia — fondo propio, borde suave, esquinas redondeadas y aire entre sí. */
+.backup-section{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.1rem 1.1rem 1.2rem;margin:0 1rem 1rem}
+.backup-section:first-of-type{margin-top:.25rem}
 .backup-sub{font-family:'DM Mono',monospace;font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text);opacity:.8;font-weight:600;margin:.2rem 0 .5rem;display:flex;align-items:center;gap:.4rem}
 .backup-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.5rem}
 .btn-backup{display:flex;align-items:center;gap:.6rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.7rem .8rem;cursor:pointer;transition:border-color .15s;-webkit-tap-highlight-color:transparent;font-family:inherit;font-size:1rem;text-align:left;width:100%}
