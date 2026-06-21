@@ -80,6 +80,7 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 | `BACKUP.JS` | 8579–9179 | Exportar/importar TODA la config como JSON (incluye `clients` y `treasury`). Incluye `buildVendorPayload()`. |
 | `BACKUPS.JS` | 9180–9394 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
 | `SUPABASE.JS` | 9395–9889 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos (+ fichas de clientes). |
+| `LOG.JS` | 10412–10631 | **Bitácora de diagnóstico**: `logEvent()` (best-effort, cola offline) sube a la tabla `event_log`; captura `window.onerror`/`unhandledrejection`, muestra un código `ref` al usuario y adjunta breadcrumbs (`addBreadcrumb`) + contexto. |
 | `REALTIME.JS` | 9890–10003 | Supabase Realtime: escucha `orders` nuevos y cambios en `clients`. |
 | `ORDERS.JS` | 10004–10671 | Pedidos recibidos de vendedores (`state.receivedOrders`). Al confirmar marca `order.ctaCte` (entra a la cuenta corriente de Caja). |
 | `ORDERS_UI.JS` | 10672–11033 | UI de la pestaña Pedidos (las tarjetas muestran notas/lista de la ficha del cliente). |
@@ -190,6 +191,7 @@ consultan ese rol con el helper `store_role(ns)`; sin sesión iniciada
 | `catalog_items`, `rubro_multipliers`, `settings` | Sync fila-por-fila entre dispositivos de la central (`SYNC_ROWS.JS`). |
 | `backups` | Snapshots de respaldo en nube (`BACKUPS.JS`). |
 | `clients` | **Lee** (pull + Realtime). Fichas de clientes que crean los vendedores; se integran a la libreta local (`CLIENTS.JS`, `pullVendorClients`). |
+| `event_log` | **Escribe** (insert, best-effort). Bitácora de diagnóstico: errores, contexto y breadcrumbs (`LOG.JS`). Append-only; la lee solo la central (en la práctica, se consulta por la Management API). |
 
 Realtime: se suscribe a `postgres_changes` en `orders` (pedidos nuevos) y, en
 modo multi-dispositivo, a `catalog_items` / `rubro_multipliers` / `settings` /
@@ -290,6 +292,23 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
+- **HECHO (2026-06-21): bitácora de diagnóstico** (`LOG.JS` + tabla `event_log`).
+  NO es un audit log para mirar desde la app: es una bitácora REMOTA para
+  diagnosticar cuando alguien reporta un error. Captura crashes de JS
+  (`window.onerror`/`unhandledrejection`) y fallos de operaciones riesgosas
+  (`pullOrders`/`publishCatalog`), con stack completo, contexto del dispositivo
+  (navegador, versión = nombre del cache del SW, online/offline) y **breadcrumbs**
+  (las últimas acciones, vía `addBreadcrumb`). Cada error le muestra al usuario un
+  código corto `ref` (ej. `A3F9`). Best-effort total: nunca rompe la app, y si la
+  subida falla queda en una **cola local** (`event_log_queue`, conservada por el
+  gran reset) que se reintenta al volver la conexión. **Cómo consultarla** (con
+  `SUPABASE_ACCESS_TOKEN`, Management API, endpoint `/v1/projects/<ref>/database/query`):
+  por código de referencia →
+  `select * from event_log where ref = 'A3F9' order by created_at desc;`
+  o los últimos errores →
+  `select created_at, app, actor, event, summary, meta from event_log where severity='error' order by created_at desc limit 50;`
+  El `meta.breadcrumbs` muestra qué pasó antes; `meta.error.stack`, el stack.
+  Mismo módulo en ambos repos (solo cambian `LOG_APP`/`LOG_ROLE`).
 - **HECHO (2026-06-13): acceso por persona a la nube** (Supabase Auth + RLS por
   rol, hallazgo C1 de `AUDITORIA.md`). Ver la sección "Acceso por persona" en
   "Conexión con la nube" (arriba) y `schema.sql`. Alta/baja de personas: crear/
