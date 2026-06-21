@@ -8,6 +8,30 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StockMerger">
 <meta name="theme-color" content="#0d0f14">
+<script>
+/* Tema claro/oscuro: se aplica antes de pintar para evitar parpadeo. */
+(function(){
+  try{
+    var KEY='ui_theme';
+    window.applyTheme=function(t){
+      if(t){try{localStorage.setItem(KEY,t);}catch(e){}}
+      else{try{t=localStorage.getItem(KEY);}catch(e){} t=t||'dark';}
+      document.documentElement.setAttribute('data-theme',t);
+      var m=document.querySelector('meta[name="theme-color"]');
+      if(m)m.setAttribute('content',t==='light'?'#eef1f6':'#0d0f14');
+      var b=document.getElementById('themeToggleBtn');
+      if(b)b.textContent=(t==='light'?'🌙 Modo oscuro':'☀️ Modo claro');
+      return t;
+    };
+    window.toggleTheme=function(){
+      var cur=document.documentElement.getAttribute('data-theme')||'dark';
+      window.applyTheme(cur==='light'?'dark':'light');
+    };
+    window.applyTheme();
+    document.addEventListener('DOMContentLoaded',function(){window.applyTheme();});
+  }catch(e){}
+})();
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>StockMerger</title>
@@ -32,6 +56,12 @@
   --accent:#00e5a0;--accent2:#3b82f6;--warn:#f59e0b;--text:#e2e8f0;
   --muted:#64748b;--red:#f87171;--tap:48px;
 }
+html[data-theme="light"]{
+  --bg:#eef1f6;--surface:#ffffff;--surface2:#f1f4f9;--border:#d4dae6;
+  --accent:#00a878;--accent2:#2563eb;--warn:#b45309;--text:#1b2533;
+  --muted:#5d6b7e;--red:#dc2626;
+}
+html[data-theme="light"] select option{background:#fff}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;min-height:100dvh;overscroll-behavior:none;padding-bottom:0}
 .page{display:none;flex-direction:column;min-height:100vh;min-height:100dvh}
@@ -67,6 +97,8 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .home-hero h1{font-size:clamp(1.9rem,7vw,2.8rem);font-weight:800;letter-spacing:-.03em;line-height:1.05}
 .home-hero h1 span{color:var(--accent)}
 .home-hero p{color:var(--muted);font-size:.78rem;margin-top:.5rem;font-family:'DM Mono',monospace}
+.theme-toggle{margin-top:.9rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:.7rem;padding:.45rem .9rem;border-radius:999px;cursor:pointer;min-height:var(--tap);-webkit-tap-highlight-color:transparent}
+.theme-toggle:active{background:var(--surface)}
 
 /* UPLOAD */
 .upload-section{padding:1rem;display:flex;flex-direction:column;gap:.75rem}
@@ -2388,6 +2420,7 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="home-hero">
       <h1>OP-BAYRES<br><span>CENTRAL</span></h1>
       <p>subí el Excel del stock → cargá o sumá un ingreso</p>
+      <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" type="button">☀️ Modo claro</button>
     </div>
     <div class="upload-section">
       <div class="upload-card" id="cardA" ondragover="drag(event,'A')" ondragleave="undrag('A')" ondrop="drop(event,'A')">
