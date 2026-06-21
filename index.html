@@ -2363,9 +2363,10 @@ tr.row-lowstock td{background:#f59e0b08}
 .caja-card .cc-name{font-size:.62rem;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .caja-card .cc-val{font-size:1.05rem;font-weight:800;margin-top:.25rem;font-family:'DM Mono',monospace}
 .caja-table{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.74rem}
-/* Reportes de Caja: la tabla se desliza SOLO ella dentro de su tarjeta, para
-   que la página no se corra de costado (mismo criterio que Precios). */
-.caja-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+/* Reportes de Caja: la tabla va dentro de un recuadro que se desliza SOLO él,
+   para que la página no se corra de costado (mismo criterio que Precios). El
+   wrap conserva la maqueta normal de la tabla (no se desalinean las filas). */
+.caja-tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
 .caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
 .caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
@@ -14507,7 +14508,7 @@ function _renderCajaMain() {
   if (!movs.length) {
     html += `<div class="caja-empty">Sin movimientos en este período.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Concepto</th><th class="num">Pesos (ARS)</th><th class="num">Dólares (USD)</th><th class="num">≈ Total USD</th>
     </tr></thead><tbody>`;
     Object.entries(CAJA_CATS).forEach(([id, cat]) => {
@@ -14523,7 +14524,7 @@ function _renderCajaMain() {
     const netEq = inEq - outEq;
     html += `<tr class="caja-total"><td>Resultado del período</td><td class="num"></td><td class="num"></td>
       <td class="num ${netEq >= 0 ? 'caja-pos' : 'caja-neg'}">${netEq < 0 ? '−' : ''}USD ${_fmtN(Math.abs(netEq))}</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
 
@@ -14534,7 +14535,7 @@ function _renderCajaMain() {
   } else {
     const sorted = [...movs].sort((a, b) =>
       String(b.date).localeCompare(String(a.date)) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Fecha</th><th>Tipo</th><th>Cuenta</th><th>Detalle</th><th class="num">Monto</th><th class="num">≈ USD</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(m => {
@@ -14552,7 +14553,7 @@ function _renderCajaMain() {
         <td class="num"><button class="caja-mini-btn danger" onclick="deleteCajaMovement('${escJsAttr(m.id)}')">🗑</button></td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   return html;
@@ -14571,7 +14572,7 @@ function _renderCajaCalle() {
     return html;
   }
   let total = 0;
-  html += `<table class="caja-table"><thead><tr>
+  html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
     <th>Cliente</th><th>Vendedor</th><th>Lista</th>
     <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
   </tr></thead><tbody>`;
@@ -14598,7 +14599,7 @@ function _renderCajaCalle() {
     html += `<tr><td colspan="5" class="caja-muted">Equivalente en pesos (1 USD = $ ${_fmtN(state.treasury.rate)})</td>
       <td class="num caja-muted">$ ${_fmtN(total * state.treasury.rate)}</td><td></td></tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></table></div>`;
   html += `<div class="caja-empty" style="margin-top:.5rem">Los pedidos confirmados ANTES de esta versión se consideran ya cobrados y no suman deuda.
     Para deudas previas usá el campo "Deuda inicial" de la ficha del cliente.</div>`;
   html += `</div>`;
@@ -14631,7 +14632,7 @@ function _renderCajaReportes() {
   if (!monthOrders.length) {
     html += `<div class="caja-empty">Sin pedidos confirmados en este mes.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Lista</th><th class="num">Pedidos</th><th class="num">USD</th><th class="num">% del mes</th>
     </tr></thead><tbody>`;
     [['act', '📋 Lista 7'], ['dist', '🚛 Distribuidor'], ['vip', '⭐ VIP']].forEach(([id, lbl]) => {
@@ -14642,7 +14643,7 @@ function _renderCajaReportes() {
     });
     html += `<tr class="caja-total"><td>Total</td><td class="num">${monthOrders.length}</td>
       <td class="num">USD ${_fmtN(mesTotal)}</td><td class="num">100%</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
 
@@ -14660,7 +14661,7 @@ function _renderCajaReportes() {
     html += `<div class="caja-empty">Sin ventas este mes.</div>`;
   } else {
     let totCom = 0;
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Vendedor</th><th class="num">Pedidos</th><th class="num">Ventas USD</th><th class="num">% comisión</th><th class="num">Comisión USD</th>
     </tr></thead><tbody>`;
     [...byVendor.values()].sort((a, b) => b.usd - a.usd).forEach(v => {
@@ -14675,7 +14676,7 @@ function _renderCajaReportes() {
     });
     html += `<tr class="caja-total"><td colspan="4">Total comisiones</td>
       <td class="num caja-pos">USD ${_fmtN(totCom)}</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     html += `<div class="caja-empty" style="margin-top:.4rem">El % se guarda por vendedor y se aplica sobre las ventas confirmadas de su cartera del mes.</div>`;
   }
   html += `</div>`;
@@ -14686,7 +14687,7 @@ function _renderCajaReportes() {
   if (!balance.length) {
     html += `<div class="caja-empty">Sin datos todavía.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Mes</th><th class="num">Ventas</th><th class="num">Cobrado</th><th class="num">Gastos</th><th class="num">Impuestos</th><th class="num">Ganancia neta</th>
     </tr></thead><tbody>`;
     balance.slice(0, 13).forEach(b => {
@@ -14698,7 +14699,7 @@ function _renderCajaReportes() {
         <td class="num">${b.impuestos ? '−' + _fmtN(b.impuestos) : '—'}</td>
         <td class="num ${neto >= 0 ? 'caja-pos' : 'caja-neg'}"><b>${_fmtN(neto)}</b></td></tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     html += `<div class="caja-empty" style="margin-top:.4rem">Ventas = pedidos confirmados del mes. Gastos e impuestos = salidas de caja convertidas a USD con la cotización de cada movimiento.</div>`;
   }
   html += `</div>`;
