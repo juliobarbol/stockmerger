@@ -281,10 +281,14 @@ Dos canales equivalentes, según haya nube o no:
   **tipo de cambio que se precarga al generar el PDF de un pedido**, y se
   **sincroniza en ambos sentidos** (editar el TC en el PDF actualiza la
   cotización de Caja y viceversa; `openDocModal` lee `state.treasury.rate` y
-  `confirmDocModal` lo reescribe). Botón **🔄** (en Caja y en el modal del PDF,
-  `fetchDolarBlueInto`) que trae el **dólar blue (valor *venta*)** desde
-  `dolarapi.com` — InfoDólar no se puede leer directo por CORS. Nada de esto
-  viaja a StockVendedor ni a la nube (vive en `state.treasury`, local + backups).
+  `confirmDocModal` lo reescribe). El **dólar blue (valor *venta*) se trae
+  automáticamente** desde `dolarapi.com` (InfoDólar no se puede leer directo por
+  CORS) al abrir la app, al entrar a Caja y al abrir el modal del PDF
+  (`autoFetchDolarBlue`), pero **NUNCA pisa una cotización ya cargada hoy** (la
+  marca con `rateUpdatedAt`), así sigue siendo **editable a mano** si el operador
+  verifica otro precio. Además queda el botón **🔄** (`fetchDolarBlueInto`) para
+  forzar la actualización. Nada de esto viaja a StockVendedor ni a la nube (vive
+  en `state.treasury`, local + backups).
 - **Cuenta corriente de clientes (en USD)**: la deuda nace al CONFIRMAR un
   pedido (flag `ctaCte` que se setea desde v26 — los confirmados antes se
   asumen ya cobrados). Los pagos se registran como "cobranza" en Caja (en

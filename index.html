@@ -3401,7 +3401,7 @@ tr.row-lowstock td{background:#f59e0b08}
           <div>
             <label>Tipo de cambio (1 USD =)</label>
             <div style="display:flex;gap:.4rem;align-items:center">
-              <input type="number" id="docTC" min="0" step="0.01" style="flex:1">
+              <input type="number" id="docTC" min="0" step="0.01" style="flex:1" oninput="this.dataset.touched='1'">
               <button type="button" class="caja-rate-fetch" onclick="fetchDolarBlueInto('doc')"
                 title="Traer el dólar blue (venta) del día automáticamente">🔄</button>
             </div>
@@ -5966,7 +5966,7 @@ function switchTab(tab) {
   if (tab === 'precios') initPricesTab();
   if (tab === 'pedidos') renderOrdersTab();
   if (tab === 'analisis') renderAnalyticsTab();
-  if (tab === 'caja') renderCajaTab();
+  if (tab === 'caja') { renderCajaTab(); if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue(); }
 }
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -12334,12 +12334,17 @@ function openDocModal(localId) {
   // El tipo de cambio sale de la cotización del día de Caja (state.treasury.rate),
   // así el PDF y la pestaña Caja usan siempre el mismo dólar. Si todavía no se
   // cargó ninguna cotización, cae al último TC usado en un documento.
-  document.getElementById('docTC').value       = (state.treasury.rate > 0 ? state.treasury.rate : cfg.ultimoTC);
+  const docTCEl = document.getElementById('docTC');
+  docTCEl.value = (state.treasury.rate > 0 ? state.treasury.rate : cfg.ultimoTC);
+  docTCEl.dataset.touched = ''; // marca de "editado a mano" reseteada en cada apertura
   document.getElementById('docCliente').value  = order.client || '';
   // Resumen
   const sum = `${order.items.length} items · USD ${_fmtN(order.total)}`;
   document.getElementById('docOrderSum').textContent = sum;
   overlay.style.display = 'flex';
+  // Si todavía no hay cotización de hoy, traer el blue (actualiza el campo si no
+  // se tocó). Best-effort, no bloquea la apertura del modal.
+  if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue();
 }
 
 function closeDocModal() {
@@ -14180,11 +14185,45 @@ async function fetchDolarBlueInto(target) {
   }
   if (target === 'doc') {
     const el = document.getElementById('docTC');
-    if (el) el.value = venta;
+    if (el) { el.value = venta; el.dataset.touched = ''; }
     toast(`Dólar blue (venta): 1 USD = $ ${_fmtN(venta)} ✓`, 'ok');
   } else {
     setCajaRate(venta);
   }
+}
+
+// Trae el blue automáticamente y lo fija como cotización del día, SOLO si todavía
+// no hay una cotización cargada HOY (así nunca pisa un valor que el usuario ya
+// cargó o verificó a mano hoy; sigue siendo editable). Silencioso y best-effort:
+// si falla (sin internet, etc.) no molesta. Se llama al abrir la app y al entrar
+// a Caja / al modal del PDF.
+function autoFetchDolarBlue() {
+  if (!state.treasury) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const updated = state.treasury.rateUpdatedAt ? String(state.treasury.rateUpdatedAt).slice(0, 10) : '';
+  if (updated === today && state.treasury.rate > 0) return; // ya hay cotización de hoy
+  fetchDolarBlue().then(venta => {
+    // Re-chequear: si mientras tanto el usuario cargó/verificó una cotización hoy,
+    // respetarla y no pisarla.
+    const upd2 = state.treasury.rateUpdatedAt ? String(state.treasury.rateUpdatedAt).slice(0, 10) : '';
+    if (upd2 === today && state.treasury.rate > 0) return;
+    state.treasury.rate = venta;
+    state.treasury.rateUpdatedAt = new Date().toISOString();
+    saveTreasury();
+    // Refrescar lo que esté a la vista.
+    const ri = document.getElementById('cajaRateInput');
+    if (ri) ri.value = venta;
+    const pageCaja = document.getElementById('pageCaja');
+    if (pageCaja && pageCaja.classList.contains('active')) {
+      try { renderCajaTab(); } catch (_) {}
+    }
+    // Si el modal del PDF está abierto y el usuario no tocó el campo, actualizarlo.
+    const overlay = document.getElementById('overlayDoc');
+    const dtc = document.getElementById('docTC');
+    if (overlay && overlay.style.display === 'flex' && dtc && !dtc.dataset.touched) {
+      dtc.value = venta;
+    }
+  }).catch(() => {});
 }
 
 // ── Sub-pestañas ──
@@ -15048,6 +15087,10 @@ function _renderCajaReportes() {
     // Restaurar y renderizar el stock (lo que antes hacía la IIFE de ui.js).
     try { if (typeof restoreStockOnInit === 'function') restoreStockOnInit(); }
     catch (e) { console.warn('boot restore:', e && e.message); }
+
+    // Traer el dólar blue del día automáticamente (best-effort, no bloquea el arranque).
+    try { if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue(); }
+    catch (e) { console.warn('boot blue:', e && e.message); }
   }
 
   function _go() {
