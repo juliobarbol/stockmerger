@@ -273,6 +273,16 @@ Dos canales equivalentes, según haya nube o no:
 - **Sync de fichas vendedor → central** (tabla `clients`): los borrados NO
   viajan (la libreta de la central es de la central), y si la central editó
   una ficha (`source: 'central'`), lo que mande un vendedor no la pisa.
+- **Fichas central → vendedor (vendedor asignado)** — HECHO (2026-06-22): la
+  central puede crear un cliente y **asignarle un vendedor** (campo
+  `clientFormVendor`, datalist con `_knownVendors()`) + su lista. Al guardar,
+  `pushClientToCloud()` lo sube a `clients`. La app del vendedor cuyo nombre
+  coincide (`state.user.name`) lo BAJA con `pullClientsFromCloud()` (al arrancar,
+  al volver al frente, al abrir el selector de cliente y por Realtime), así el
+  cliente YA EXISTE en su libreta y en su lista al armar el pedido. El cruce
+  vendedor↔ficha es por nombre del vendedor; por eso la central elige del
+  datalist (nombres reales de pedidos/fichas) para que coincida EXACTO. Cruce de
+  clientes por NOMBRE, last-write-wins por `updated_at`. Lo bajado no se re-sube.
 - **Excel exportados**: siempre con autofiltro en la fila de cabecera. El
   Excel de Stock de la central incluye las 3 listas + precio China.
 - **Orden catálogo** (jerarquía rubro → marca → modelo correlativo, con
