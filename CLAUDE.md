@@ -260,7 +260,16 @@ Dos canales equivalentes, según haya nube o no:
   el pedido, su lista se aplica y los chips quedan bloqueados. Para un pedido
   puntual con otra lista se EDITA LA FICHA (no se puede pisar desde el pedido).
 - **Notas privadas por lado**: las notas del vendedor no viajan a la central y
-  viceversa. Entre apps solo viajan nombre / lista / vendedor (tabla `clients`).
+  viceversa. Entre apps viajan nombre / lista / vendedor / domicilio / teléfono
+  (tabla `clients`); las notas NO.
+- **Datos de contacto del cliente (domicilio + teléfono)** — HECHO (2026-06-22):
+  campos OPCIONALES en la ficha de cliente de ambas apps (el vendedor crea con
+  solo el nombre; la lista la define el pedido). Viajan vendor→central por la
+  tabla `clients` (columnas `domicilio`/`telefono`). En la central, la ficha sin
+  esos datos muestra un ⚠️ en la lista de 👥 Clientes (`renderClientsList`), y
+  `pullVendorClients` COMPLETA los que falten localmente sin pisar lo cargado a
+  mano por la central. Además autocompletan DOMICILIO/TELEFONOS del PDF de
+  presupuesto (`DOCS.JS`, vía `findClientFicha`).
 - **Sync de fichas vendedor → central** (tabla `clients`): los borrados NO
   viajan (la libreta de la central es de la central), y si la central editó
   una ficha (`source: 'central'`), lo que mande un vendedor no la pisa.
