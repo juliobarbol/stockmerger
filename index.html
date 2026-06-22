@@ -3464,6 +3464,11 @@ tr.row-lowstock td{background:#f59e0b08}
           </select>
         </div>
         <div>
+          <label>Vendedor asignado <span style="opacity:.6;font-weight:400">(opcional)</span></label>
+          <input type="text" id="clientFormVendor" placeholder="Vendedor de este cliente" autocomplete="off" list="clientFormVendorList">
+          <datalist id="clientFormVendorList"></datalist>
+        </div>
+        <div>
           <label>Domicilio <span style="opacity:.6;font-weight:400">(opcional)</span></label>
           <input type="text" id="clientFormDomicilio" placeholder="Dirección del cliente" autocomplete="off">
         </div>
@@ -12017,6 +12022,48 @@ function _newClientId() {
   return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// Nombres de vendedores conocidos (de fichas + pedidos recibidos), para sugerir
+// al asignar el vendedor de un cliente. Así el nombre coincide EXACTO con el que
+// usa el vendedor (clave para que su app baje la ficha).
+function _knownVendors() {
+  const set = new Set();
+  (state.clients || []).forEach(c => { const v = String(c.vendor || '').trim(); if (v) set.add(v); });
+  (state.receivedOrders || []).forEach(o => { const v = String(o.vendor || '').trim(); if (v) set.add(v); });
+  return [...set].sort((a, b) => a.localeCompare(b, 'es'));
+}
+function _fillVendorDatalist() {
+  const dl = document.getElementById('clientFormVendorList');
+  if (!dl) return;
+  dl.innerHTML = _knownVendors().map(v => `<option value="${escHtml(v)}"></option>`).join('');
+}
+
+// Subir una ficha de la central a la nube (tabla clients) para que el vendedor
+// ASIGNADO la baje a su libreta y el cliente ya exista al armar el pedido.
+// Best-effort: sin nube, no hace nada (no rompe el flujo file-only).
+async function pushClientToCloud(c) {
+  if (!c) return;
+  if (typeof scLibReady !== 'function' || !scLibReady()) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
+  const client = scClient();
+  if (!client) return;
+  try {
+    const cfg = scGetConfig();
+    const { error } = await client.from('clients').upsert({
+      ns:         cfg.ns,
+      client_id:  c.id,
+      name:       c.name,
+      list:       c.list,
+      vendor:     c.vendor || '',
+      domicilio:  c.domicilio || '',
+      telefono:   c.telefono || '',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'ns,client_id' });
+    if (error) console.warn('pushClientToCloud:', error.message);
+  } catch (e) {
+    console.warn('pushClientToCloud:', e && e.message);
+  }
+}
+
 function openClientsModal() {
   const inp = document.getElementById('clientsSearch');
   if (inp) inp.value = '';
@@ -12163,7 +12210,7 @@ function renderClientsList() {
     const sub = [];
     const notes = String(c.notes || '').trim();
     if (notes) sub.push(`📌 ${escHtml(notes)}`);
-    if (c.source === 'vendor' && c.vendor) sub.push(`👤 lo cargó ${escHtml(c.vendor)}`);
+    if (c.vendor) sub.push(`👤 ${escHtml(c.vendor)}`);
     // Aviso de datos de contacto faltantes (domicilio / teléfono)
     const faltan = [];
     if (!String(c.domicilio || '').trim()) faltan.push('domicilio');
@@ -12210,6 +12257,8 @@ function openClientForm(id) {
   document.getElementById('clientFormTitle').textContent = c ? 'Editar cliente' : 'Nuevo cliente';
   document.getElementById('clientFormName').value = c ? c.name : '';
   document.getElementById('clientFormList').value = c ? c.list : 'act';
+  _fillVendorDatalist();
+  document.getElementById('clientFormVendor').value = c ? (c.vendor || '') : '';
   document.getElementById('clientFormDomicilio').value = c ? (c.domicilio || '') : '';
   document.getElementById('clientFormTelefono').value = c ? (c.telefono || '') : '';
   document.getElementById('clientFormNotes').value = c ? (c.notes || '') : '';
@@ -12226,6 +12275,7 @@ function closeClientForm() {
 function saveClientForm() {
   const name  = (document.getElementById('clientFormName').value || '').trim();
   const lista = document.getElementById('clientFormList').value || 'act';
+  const vendorAsig = (document.getElementById('clientFormVendor').value || '').trim();
   const domicilio = (document.getElementById('clientFormDomicilio').value || '').trim();
   const telefono  = (document.getElementById('clientFormTelefono').value || '').trim();
   const notes = (document.getElementById('clientFormNotes').value || '').trim();
@@ -12247,6 +12297,7 @@ function saveClientForm() {
   }
   c.name = name;
   c.list = lista;
+  c.vendor = vendorAsig;
   c.domicilio = domicilio;
   c.telefono = telefono;
   c.notes = notes;
@@ -12254,6 +12305,7 @@ function saveClientForm() {
   c.source = 'central';   // editada a mano: los vendedores ya no la pisan
   c.updatedAt = now;
   saveClients();
+  pushClientToCloud(c);   // mandarla a la nube para que el vendedor asignado la baje
   closeClientForm();
   renderClientsList();
   if (typeof renderOrdersTab === 'function') renderOrdersTab(); // refresca notas en tarjetas
