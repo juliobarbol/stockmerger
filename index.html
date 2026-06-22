@@ -2377,6 +2377,23 @@ tr.row-lowstock td{background:#f59e0b08}
 .mcr-item{padding:.6rem .7rem;font-size:.82rem;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)}
 .mcr-item:last-child{border-bottom:none}
 .mcr-item:active{background:var(--surface2)}
+/* Imputación de pagos a comprobantes (formulario de movimiento). */
+.mov-imput-list{margin-top:.35rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:200px;overflow-y:auto}
+.mov-imput-empty{padding:.7rem;font-size:.78rem;color:var(--muted)}
+.mov-imput-item{display:flex;align-items:center;gap:.5rem;padding:.5rem .6rem;border-bottom:1px solid var(--border)}
+.mov-imput-item:last-child{border-bottom:none}
+.mov-imput-item .mii-info{flex:1;min-width:0;font-size:.76rem;font-family:'DM Mono',monospace;color:var(--text);line-height:1.35}
+.mov-imput-item .mii-info small{color:var(--muted)}
+.mov-imput-item input{width:92px;text-align:right;padding:.35rem .4rem;font-size:.78rem}
+.mov-imput-summary{margin-top:.4rem;font-size:.76rem;font-family:'DM Mono',monospace;color:var(--muted)}
+.mov-imput-summary b{color:var(--text)}
+.mov-imput-summary .mis-warn{color:var(--red)}
+/* Detalle por comprobante en Dinero en calle. */
+.calle-detail td{background:var(--surface);padding:.55rem .7rem !important}
+.calle-detail .cdl{display:flex;align-items:center;gap:.5rem;font-size:.76rem;font-family:'DM Mono',monospace;padding:.2rem 0;border-bottom:1px dashed var(--border)}
+.calle-detail .cdl:last-child{border-bottom:none}
+.calle-detail .cdl .cdl-lbl{flex:1;min-width:0}
+.calle-detail .cdl small{color:var(--muted)}
 /* Modal de texto propio (reemplaza el prompt() del navegador). */
 .app-modal-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:1.5rem}
 .app-modal{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.2rem;box-shadow:0 16px 48px rgba(0,0,0,.35)}
@@ -3544,6 +3561,14 @@ tr.row-lowstock td{background:#f59e0b08}
         <div>
           <label>Concepto / detalle</label>
           <input type="text" id="movConcepto" placeholder="Ej: expensas oficina, IIBB, pago de Juan..." autocomplete="off">
+        </div>
+        <div id="movImputRow" style="display:none">
+          <label style="display:flex;align-items:center;gap:.5rem;justify-content:space-between">
+            <span>Aplicar el pago a pedidos (imputación)</span>
+            <button type="button" class="caja-mini-btn" onclick="movAutofillImput(true)">↻ Repartir automático</button>
+          </label>
+          <div id="movImputList" class="mov-imput-list"></div>
+          <div id="movImputSummary" class="mov-imput-summary"></div>
         </div>
       </div>
     </div>
@@ -14403,6 +14428,8 @@ function openMovForm(cat, client) {
   document.getElementById('movMonto').value = '';
   document.getElementById('movRate').value = state.treasury.rate || state.docConfig?.ultimoTC || '';
   document.getElementById('movConcepto').value = '';
+  _movImputClient = ' ';   // forzar rearmado de la lista de imputación
+  _movAllocTouched = false;
   movClientHide();
   movFormSync();
   refreshSelect(document.getElementById('movCat'));
@@ -14432,6 +14459,7 @@ function movClientFilter(q) {
 function movClientPick(name) {
   document.getElementById('movClient').value = name;
   movClientHide();
+  movFormSync();   // rearmar la lista de pedidos pendientes del cliente elegido
 }
 function movClientHide() {
   const box = document.getElementById('movClientResults');
@@ -14439,6 +14467,79 @@ function movClientHide() {
 }
 // Pequeño retardo: deja que el onmousedown del ítem dispare antes de ocultar.
 function movClientBlurLater() { setTimeout(movClientHide, 200); }
+
+// ── Imputación del pago a comprobantes (dentro del formulario) ──
+let _movImputClient = '';      // cliente para el que está armada la lista
+let _movAllocTouched = false;  // true si el usuario editó algún monto a mano
+
+// USD que entra con este pago (según cuenta/monto/cotización).
+function _movPaymentUsd() {
+  const acc = _cajaAcc(document.getElementById('movAccount').value);
+  const amount = parseFloat(document.getElementById('movMonto').value) || 0;
+  const rate = parseFloat(document.getElementById('movRate').value) || state.treasury.rate || 0;
+  if (amount <= 0) return 0;
+  if (acc.cur === 'USD') return Math.round(amount * 100) / 100;
+  if (rate > 0) return Math.round((amount / rate) * 100) / 100;
+  return 0;
+}
+
+// Arma la lista de pedidos pendientes del cliente elegido y la prellena (FIFO).
+function movBuildImput() {
+  const box = document.getElementById('movImputList');
+  if (!box) return;
+  const name = (document.getElementById('movClient').value || '').trim();
+  _movImputClient = name;
+  _movAllocTouched = false;
+  const ledger = name ? _clientLedger(name) : { lines: [] };
+  const pend = ledger.lines.filter(l => l.pendiente > 0.009);
+  if (!pend.length) {
+    box.innerHTML = `<div class="mov-imput-empty">${name
+      ? 'Este cliente no tiene pedidos pendientes — el pago queda "a cuenta".'
+      : 'Elegí un cliente para ver sus pedidos pendientes.'}</div>`;
+    movImputRecalc();
+    return;
+  }
+  box.innerHTML = pend.map(l => `
+    <div class="mov-imput-item">
+      <div class="mii-info">${_estadoIcon(l.estado)} ${escHtml(l.label)}
+        <small>· ${l.date ? l.date.split('-').reverse().join('/') : '—'} · falta USD ${_fmtN(l.pendiente)}</small></div>
+      <input type="number" class="mov-alloc" data-ref="${escJsAttr(l.ref)}" data-pend="${l.pendiente}"
+        min="0" step="0.01" placeholder="0" oninput="_movAllocTouched=true;movImputRecalc()">
+    </div>`).join('');
+  movAutofillImput(false);
+}
+
+// Reparte el pago disponible entre los pedidos pendientes, del más viejo al más
+// nuevo, sin pasar lo que falta de cada uno. force=true reparte aunque el
+// usuario haya tocado los montos (botón "Repartir automático").
+function movAutofillImput(force) {
+  const inputs = [...document.querySelectorAll('#movImputList .mov-alloc')];
+  if (!inputs.length) { movImputRecalc(); return; }
+  if (_movAllocTouched && !force) { movImputRecalc(); return; }
+  let restante = _movPaymentUsd();
+  inputs.forEach(inp => {
+    const pend = parseFloat(inp.dataset.pend) || 0;
+    const asignar = Math.max(0, Math.min(pend, Math.round(restante * 100) / 100));
+    inp.value = asignar > 0 ? asignar : '';
+    restante = Math.round((restante - asignar) * 100) / 100;
+  });
+  if (force) _movAllocTouched = false;
+  movImputRecalc();
+}
+
+// Refresca el resumen "pago / imputado / a cuenta" y el aviso de exceso.
+function movImputRecalc() {
+  const sum = [...document.querySelectorAll('#movImputList .mov-alloc')]
+    .reduce((s, inp) => s + (parseFloat(inp.value) || 0), 0);
+  const pago = _movPaymentUsd();
+  const aCuenta = Math.round((pago - sum) * 100) / 100;
+  const el = document.getElementById('movImputSummary');
+  if (!el) return;
+  if (pago <= 0) { el.innerHTML = ''; return; }
+  let html = `Pago: <b>USD ${_fmtN(pago)}</b> · Imputado: <b>USD ${_fmtN(Math.round(sum * 100) / 100)}</b> · A cuenta: <b>USD ${_fmtN(Math.max(0, aCuenta))}</b>`;
+  if (sum - pago > 0.01) html += `<br><span class="mis-warn">⚠️ Estás imputando USD ${_fmtN(sum - pago)} más de lo que entra. Ajustá los montos.</span>`;
+  el.innerHTML = html;
+}
 
 // ── Diálogo de texto propio (reemplaza el prompt() del navegador) ──
 // Devuelve una promesa con el texto, o null si se cancela. Uso:
@@ -14603,6 +14704,16 @@ function movFormSync() {
   hint.textContent = (acc.cur === 'ARS' && monto > 0 && rate > 0)
     ? `≈ USD ${_fmtN(monto / rate)} a esa cotización`
     : '';
+  // Imputación a comprobantes: solo en cobranzas.
+  const imputRow = document.getElementById('movImputRow');
+  if (imputRow) {
+    imputRow.style.display = (cat === 'cobranza') ? '' : 'none';
+    if (cat === 'cobranza') {
+      const name = (document.getElementById('movClient').value || '').trim();
+      if (name !== _movImputClient) movBuildImput();
+      else movAutofillImput(false);
+    }
+  }
 }
 
 function saveMovForm() {
@@ -14633,7 +14744,21 @@ function saveMovForm() {
     usd = amount / rate;
   }
 
-  addCajaMovement({
+  // Imputación a comprobantes (solo cobranzas): tomar los montos cargados.
+  let allocations = [];
+  if (category === 'cobranza') {
+    document.querySelectorAll('#movImputList .mov-alloc').forEach(inp => {
+      const v = Math.round((parseFloat(inp.value) || 0) * 100) / 100;
+      if (v > 0) allocations.push({ ref: inp.dataset.ref, usd: v });
+    });
+    const sumAlloc = allocations.reduce((s, a) => s + a.usd, 0);
+    if (sumAlloc - usd > 0.01) {
+      toast('Estás imputando más de lo que entra. Ajustá los montos a aplicar.', 'err');
+      return;
+    }
+  }
+
+  const mov = {
     id: _newMovId(),
     date,
     createdAt: new Date().toISOString(),
@@ -14644,7 +14769,9 @@ function saveMovForm() {
     rate,
     concept,
     client: category === 'cobranza' ? client : '',
-  });
+  };
+  if (allocations.length) mov.allocations = allocations;
+  addCajaMovement(mov);
   closeMovForm();
   renderCajaTab();
   const dir = _cajaCat(category).dir > 0 ? 'Entrada' : 'Salida';
@@ -14692,6 +14819,67 @@ function computeClientDebts() {
   out.sort((a, b) => b.saldo - a.saldo);
   return out;
 }
+
+// ════════════════════════════════════════════════════════════════════
+// IMPUTACIÓN DE PAGOS A COMPROBANTES (v27)
+// Un pago (cobranza) puede llevar `allocations: [{ ref, usd }]` que dicen a qué
+// pedido(s) confirmado(s) se aplica y cuánto. Lo NO imputado queda "a cuenta"
+// (baja la deuda general igual). Los pagos viejos sin allocations = todo a
+// cuenta, así nada de lo ya cargado cambia. La deuda TOTAL del cliente no
+// depende de la imputación (es solo una capa de detalle por comprobante).
+// ════════════════════════════════════════════════════════════════════
+function _orderRef(o) { return String(o.localId || o.orderId || ''); }
+
+// Comprobantes (pedidos confirmados en cuenta corriente) de un cliente, viejo→nuevo.
+function _clientComprobantes(name) {
+  const k = _cliKey(name);
+  return (state.receivedOrders || [])
+    .filter(o => o.status === 'confirmado' && o.ctaCte && _cliKey(o.client) === k)
+    .map(o => ({
+      ref: _orderRef(o),
+      date: String(_saleDate(o) || '').slice(0, 10),
+      label: `Pedido ${o.orderId || o.localId}`,
+      total: Math.round((o.total || 0) * 100) / 100,
+      items: (o.items || []).length,
+      list: o.list,
+    }))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref).localeCompare(String(b.ref)));
+}
+
+// Cuánto se pagó (imputado) a cada pedido. Devuelve Map ref → USD.
+function _paidByOrder(name) {
+  const k = _cliKey(name);
+  const map = new Map();
+  (state.treasury.movements || []).forEach(m => {
+    if (m.category !== 'cobranza' || _cliKey(m.client) !== k) return;
+    (m.allocations || []).forEach(a => {
+      const ref = String(a.ref || '');
+      if (!ref) return;
+      map.set(ref, (map.get(ref) || 0) + (a.usd || 0));
+    });
+  });
+  return map;
+}
+
+// Detalle por comprobante (total/pagado/pendiente/estado) + total pagado "a cuenta".
+function _clientLedger(name) {
+  const comps = _clientComprobantes(name);
+  const paid = _paidByOrder(name);
+  let totalPagos = 0, imputado = 0;
+  (state.treasury.movements || []).forEach(m => {
+    if (m.category === 'cobranza' && _cliKey(m.client) === _cliKey(name)) totalPagos += m.usd || 0;
+  });
+  const lines = comps.map(c => {
+    const pg = Math.round((paid.get(c.ref) || 0) * 100) / 100;
+    imputado += pg;
+    const pend = Math.round((c.total - pg) * 100) / 100;
+    const estado = pend <= 0.009 ? 'pagado' : pg > 0.009 ? 'parcial' : 'pendiente';
+    return { ...c, pagado: pg, pendiente: pend, estado };
+  });
+  const aCuenta = Math.round((totalPagos - imputado) * 100) / 100; // pagos sin imputar
+  return { lines, aCuenta, totalPagos };
+}
+function _estadoIcon(e) { return e === 'pagado' ? '🟢' : e === 'parcial' ? '🟡' : '🔴'; }
 
 // Movimientos de la cuenta corriente de UN cliente, en orden cronológico.
 function _clientStatementRows(name) {
@@ -14787,6 +14975,36 @@ function exportClientStatement(name) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
     doc.text(`≈ $ ${_fmtN(entry.saldo * state.treasury.rate)} (1 USD = $ ${_fmtN(state.treasury.rate)})`, 210 - MARG_X, yEnd, { align: 'right' });
   }
+
+  // ── Detalle por comprobante (qué pedido está pago / pendiente) ──
+  const ledger = _clientLedger(entry.name);
+  if (ledger.lines.length) {
+    yEnd += 10;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text('DETALLE POR COMPROBANTE', MARG_X, yEnd);
+    const estTxt = { pagado: 'PAGADO', parcial: 'PARCIAL', pendiente: 'PENDIENTE' };
+    const compRows = ledger.lines.map(l => [
+      l.date ? l.date.split('-').reverse().join('/') : '—',
+      l.label + (l.list ? ` (${_listName(l.list)})` : ''),
+      _fmtN(l.total),
+      _fmtN(l.pagado),
+      _fmtN(Math.max(0, l.pendiente)),
+      estTxt[l.estado] || '',
+    ]);
+    if (ledger.aCuenta > 0.009) {
+      compRows.push(['—', 'Pagos a cuenta (sin imputar)', '', _fmtN(ledger.aCuenta), '', 'A CUENTA']);
+    }
+    doc.autoTable({
+      startY: yEnd + 2,
+      margin: { left: MARG_X, right: MARG_X },
+      head: [['FECHA', 'COMPROBANTE', 'TOTAL USD', 'PAGADO USD', 'PENDIENTE USD', 'ESTADO']],
+      body: compRows,
+      styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 1.6 },
+      headStyles: { fillColor: [30, 37, 53], textColor: 255, fontStyle: 'bold' },
+      columnStyles: { 0: { cellWidth: 20 }, 2: { halign: 'right', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 24 }, 4: { halign: 'right', cellWidth: 26 }, 5: { halign: 'center', cellWidth: 24 } },
+    });
+  }
+
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
   doc.text('Generado por StockMerger', 105, 290, { align: 'center' });
 
@@ -15009,12 +15227,14 @@ function _renderCajaCalle() {
     <th>Cliente</th><th>Vendedor</th><th>Lista</th>
     <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
   </tr></thead><tbody>`;
-  debts.forEach(e => {
+  debts.forEach((e, idx) => {
     total += e.saldo;
     const cls = e.saldo > 0.009 ? 'caja-neg' : e.saldo < -0.009 ? 'caja-pos' : 'caja-muted';
     const cargosTot = e.saldoInicial + e.cargos;
+    const ledger = _clientLedger(e.name);
+    const tieneComp = ledger.lines.length > 0;
     html += `<tr>
-      <td>${escHtml(e.name)}</td>
+      <td>${tieneComp ? `<button class="caja-mini-btn" onclick="toggleCalleDetail(${idx})" id="cdbtn-${idx}" style="margin-right:.3rem">▸</button>` : ''}${escHtml(e.name)}</td>
       <td>${escHtml(e.vendor || '—')}</td>
       <td>${e.hasFicha ? _listName(e.list) : '—'}</td>
       <td class="num">${_fmtN(cargosTot)}</td>
@@ -15025,6 +15245,20 @@ function _renderCajaCalle() {
         <button class="caja-mini-btn" onclick="exportClientStatement('${escJsAttr(e.name)}')">📄 Resumen</button>
       </td>
     </tr>`;
+    if (tieneComp) {
+      const det = ledger.lines.map(l => `<div class="cdl">
+        <span class="cdl-lbl">${_estadoIcon(l.estado)} ${escHtml(l.label)}
+          <small>· ${l.date ? l.date.split('-').reverse().join('/') : '—'} · ${_listName(l.list)}</small></span>
+        <span>Total <b>${_fmtN(l.total)}</b> · Pagado ${_fmtN(l.pagado)} · Falta <b>${_fmtN(Math.max(0, l.pendiente))}</b></span>
+      </div>`).join('');
+      const aCuentaTxt = ledger.aCuenta > 0.009
+        ? `<div class="cdl"><span class="cdl-lbl caja-muted">💵 Pagos a cuenta (sin imputar)</span><span><b>USD ${_fmtN(ledger.aCuenta)}</b></span></div>`
+        : '';
+      const iniTxt = e.saldoInicial > 0.009
+        ? `<div class="cdl"><span class="cdl-lbl caja-muted">📌 Saldo inicial (previo a la app)</span><span><b>USD ${_fmtN(e.saldoInicial)}</b></span></div>`
+        : '';
+      html += `<tr class="calle-detail" id="cd-${idx}" style="display:none"><td colspan="7">${iniTxt}${det}${aCuentaTxt}</td></tr>`;
+    }
   });
   html += `<tr class="caja-total"><td colspan="5">TOTAL DINERO EN CALLE</td>
     <td class="num ${total > 0 ? 'caja-neg' : 'caja-pos'}"><b>USD ${_fmtN(total)}</b></td><td></td></tr>`;
@@ -15037,6 +15271,16 @@ function _renderCajaCalle() {
     Para deudas previas usá el campo "Deuda inicial" de la ficha del cliente.</div>`;
   html += `</div>`;
   return html;
+}
+
+// Muestra/oculta el detalle por comprobante de un cliente en "Dinero en calle".
+function toggleCalleDetail(idx) {
+  const row = document.getElementById('cd-' + idx);
+  const btn = document.getElementById('cdbtn-' + idx);
+  if (!row) return;
+  const show = row.style.display === 'none';
+  row.style.display = show ? '' : 'none';
+  if (btn) btn.textContent = show ? '▾' : '▸';
 }
 
 // ── 📊 Sub-pestaña Reportes ──
