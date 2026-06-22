@@ -8,6 +8,30 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StockMerger">
 <meta name="theme-color" content="#0d0f14">
+<script>
+/* Tema claro/oscuro: se aplica antes de pintar para evitar parpadeo. */
+(function(){
+  try{
+    var KEY='ui_theme';
+    window.applyTheme=function(t){
+      if(t){try{localStorage.setItem(KEY,t);}catch(e){}}
+      else{try{t=localStorage.getItem(KEY);}catch(e){} t=t||'dark';}
+      document.documentElement.setAttribute('data-theme',t);
+      var m=document.querySelector('meta[name="theme-color"]');
+      if(m)m.setAttribute('content',t==='light'?'#eef1f6':'#0d0f14');
+      var b=document.getElementById('themeToggleBtn');
+      if(b)b.textContent=(t==='light'?'🌙 Modo oscuro':'☀️ Modo claro');
+      return t;
+    };
+    window.toggleTheme=function(){
+      var cur=document.documentElement.getAttribute('data-theme')||'dark';
+      window.applyTheme(cur==='light'?'dark':'light');
+    };
+    window.applyTheme();
+    document.addEventListener('DOMContentLoaded',function(){window.applyTheme();});
+  }catch(e){}
+})();
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>StockMerger</title>
@@ -32,6 +56,12 @@
   --accent:#00e5a0;--accent2:#3b82f6;--warn:#f59e0b;--text:#e2e8f0;
   --muted:#64748b;--red:#f87171;--tap:48px;
 }
+html[data-theme="light"]{
+  --bg:#eef1f6;--surface:#ffffff;--surface2:#f1f4f9;--border:#d4dae6;
+  --accent:#00a878;--accent2:#2563eb;--warn:#b45309;--text:#1b2533;
+  --muted:#5d6b7e;--red:#dc2626;
+}
+html[data-theme="light"] select option{background:#fff}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;min-height:100dvh;overscroll-behavior:none;padding-bottom:0}
 .page{display:none;flex-direction:column;min-height:100vh;min-height:100dvh}
@@ -67,6 +97,8 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .home-hero h1{font-size:clamp(1.9rem,7vw,2.8rem);font-weight:800;letter-spacing:-.03em;line-height:1.05}
 .home-hero h1 span{color:var(--accent)}
 .home-hero p{color:var(--muted);font-size:.78rem;margin-top:.5rem;font-family:'DM Mono',monospace}
+.theme-toggle{margin-top:.9rem;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:.7rem;padding:.45rem .9rem;border-radius:999px;cursor:pointer;min-height:var(--tap);-webkit-tap-highlight-color:transparent}
+.theme-toggle:active{background:var(--surface)}
 
 /* UPLOAD */
 .upload-section{padding:1rem;display:flex;flex-direction:column;gap:.75rem}
@@ -225,7 +257,7 @@ th.sort-asc::after{content:' ↑';color:var(--accent)}
 th.sort-desc::after{content:' ↓';color:var(--accent)}
 td{padding:.6rem 1rem;border-bottom:1px solid #1e253570;font-family:'DM Mono',monospace;vertical-align:middle;white-space:nowrap}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:#1e253540}
+tr:hover td{background:var(--surface2)}
 tr.row-nostock td{background:#f871710a}
 tr.row-lowstock td{background:#f59e0b08}
 .qty-a{color:var(--accent2);font-weight:600}.qty-b{color:var(--warn);font-weight:600}
@@ -253,7 +285,10 @@ tr.row-lowstock td{background:#f59e0b08}
 .btn-dl-alert:active { border-color: var(--red); color: var(--red); }
 
 /* BACKUP SECTION */
-.backup-section{padding:.75rem 1rem 1.5rem;border-top:1px solid var(--border);margin-top:.25rem}
+/* Estilo DaisyUI (pestaña Archivos): cada sección de config es una "card"
+   limpia — fondo propio, borde suave, esquinas redondeadas y aire entre sí. */
+.backup-section{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.1rem 1.1rem 1.2rem;margin:0 1rem 1rem}
+.backup-section:first-of-type{margin-top:.25rem}
 .backup-sub{font-family:'DM Mono',monospace;font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text);opacity:.8;font-weight:600;margin:.2rem 0 .5rem;display:flex;align-items:center;gap:.4rem}
 .backup-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-top:.5rem}
 .btn-backup{display:flex;align-items:center;gap:.6rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.7rem .8rem;cursor:pointer;transition:border-color .15s;-webkit-tap-highlight-color:transparent;font-family:inherit;font-size:1rem;text-align:left;width:100%}
@@ -922,11 +957,14 @@ tr.row-lowstock td{background:#f59e0b08}
   overflow-x: auto;
   -webkit-overflow-scrolling: touch; /* scroll suave en iOS */
 }
-/* La de rubros entra a lo ancho; SIN overflow para que el thead sticky
-   (encabezado fijo al scrollear) funcione — un overflow en el contenedor
-   rompe position:sticky. */
+/* Ambas tablas scrollean SOLO en horizontal dentro de su tarjeta, para que la
+   página no se desplace de costado en el teléfono cuando las columnas no
+   entran. (El thead deja de quedar fijo al bajar — mismo trade-off que la
+   tabla de productos, que ya funcionaba así.) */
 .rubros-table-wrap {
-  overflow: visible;
+  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .rubros-table, .productos-table {
   width: 100%;
@@ -937,6 +975,10 @@ tr.row-lowstock td{background:#f59e0b08}
    ya que tiene 6 columnas que no entran en mobile. */
 .productos-table {
   min-width: 640px;
+}
+/* La de rubros (5 columnas) también puede no entrar en mobile. */
+.rubros-table {
+  min-width: 480px;
 }
 /* Columnas numéricas más compactas para que entre más en pantalla */
 .productos-table td.num,
@@ -975,6 +1017,7 @@ tr.row-lowstock td{background:#f59e0b08}
 
 /* Hint visual de scroll horizontal en mobile: sombra a los costados
    que sugiere que hay más contenido para scrollear. */
+.rubros-table-wrap,
 .productos-table-wrap {
   background:
     linear-gradient(to right, rgba(0,0,0,0.35), transparent) 100% 0/14px 100% no-repeat,
@@ -1783,6 +1826,10 @@ tr.row-lowstock td{background:#f59e0b08}
 }
 .od-table td.od-num { text-align: right; font-family: 'DM Mono', monospace; }
 .od-table td.od-num { white-space: nowrap; }
+/* El detalle del pedido entra entero: los nombres largos bajan de renglón en
+   vez de empujar la tabla (y la página) de costado. Las columnas numéricas
+   siguen sin cortarse (regla .od-num de arriba). */
+.od-table td { white-space: normal; word-break: break-word; }
 .od-meta {
   font-size: .58rem;
   color: var(--muted);
@@ -2305,6 +2352,9 @@ tr.row-lowstock td{background:#f59e0b08}
 /* ══ CAJA / TESORERÍA (v26) ══ */
 .caja-rate-box{display:flex;align-items:center;gap:.4rem;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:.3rem .6rem;font-family:'DM Mono',monospace;font-size:.72rem;color:var(--muted)}
 .caja-rate-box input{width:7.5rem;min-height:0;padding:.3rem .45rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-family:'DM Mono',monospace;font-size:.8rem}
+.caja-rate-fetch{min-height:0;padding:.3rem .5rem;background:var(--surface);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:.85rem;line-height:1}
+.caja-rate-fetch:hover{background:var(--surface2)}
+.caja-rate-fetch.loading{opacity:.5;pointer-events:none}
 .caja-subtabs{display:flex;gap:.3rem;padding:.5rem 1rem .4rem;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none;background:var(--bg)}
 .caja-subtabs::-webkit-scrollbar{display:none}
 .caja-body{padding:1rem;max-width:1100px;margin:0 auto;width:100%}
@@ -2316,6 +2366,43 @@ tr.row-lowstock td{background:#f59e0b08}
 .caja-card .cc-name{font-size:.62rem;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .caja-card .cc-val{font-size:1.05rem;font-weight:800;margin-top:.25rem;font-family:'DM Mono',monospace}
 .caja-table{width:100%;border-collapse:collapse;font-family:'DM Mono',monospace;font-size:.74rem}
+/* Reportes de Caja: la tabla va dentro de un recuadro que se desliza SOLO él,
+   para que la página no se corra de costado (mismo criterio que Precios). El
+   wrap conserva la maqueta normal de la tabla (no se desalinean las filas). */
+.caja-tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+/* Selector de cliente in-app del formulario de movimiento (reemplaza el
+   datalist nativo). Desplegable propio, filtrable y con el estilo de la app. */
+.mov-client-results{display:none;margin-top:.35rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:190px;overflow-y:auto}
+.mov-client-results.show{display:block}
+.mcr-item{padding:.6rem .7rem;font-size:.82rem;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;border-bottom:1px solid var(--border)}
+.mcr-item:last-child{border-bottom:none}
+.mcr-item:active{background:var(--surface2)}
+/* Modal de texto propio (reemplaza el prompt() del navegador). */
+.app-modal-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.app-modal{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.2rem;box-shadow:0 16px 48px rgba(0,0,0,.35)}
+.app-modal-title{font-size:.9rem;font-weight:700;color:var(--text);margin-bottom:.9rem;line-height:1.4;white-space:pre-wrap}
+.app-modal-input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:.9rem;padding:.6rem .7rem;border-radius:10px;outline:none;min-height:var(--tap)}
+.app-modal-input:focus{border-color:var(--accent)}
+.app-modal-actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1.1rem}
+.app-modal-btn{min-height:var(--tap);padding:.5rem 1.1rem;border-radius:10px;font-family:'Syne',sans-serif;font-weight:700;font-size:.85rem;cursor:pointer;border:1px solid var(--border);-webkit-tap-highlight-color:transparent}
+.app-modal-cancel{background:var(--surface2);color:var(--text)}
+.app-modal-ok{background:var(--accent);color:#0d0f14;border-color:var(--accent)}
+.app-modal-msg{font-size:.85rem;color:var(--text);line-height:1.5;white-space:pre-wrap;max-height:55vh;overflow-y:auto}
+.app-modal-danger{background:#e5484d;color:#fff;border-color:#e5484d}
+/* ── Desplegable propio (reemplaza la lista nativa del <select>). El select
+   queda oculto pero funcional; la lista flota a nivel de página para no quedar
+   recortada dentro de modales o áreas con scroll. Ver enhanceSelect(). ── */
+.csel{position:relative;display:block;width:100%;min-width:0}
+.sort-row .csel{flex:1}
+.csel-native{position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;pointer-events:none}
+.csel-trigger{width:100%;text-align:left;cursor:pointer;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:.55rem 2rem .55rem .65rem;font-family:'DM Mono',monospace;font-size:.8rem;min-height:var(--tap);position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-tap-highlight-color:transparent}
+.csel-trigger::after{content:'▾';position:absolute;right:.65rem;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.csel-pop{display:none;position:fixed;z-index:3000;max-width:90vw;max-height:50vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.csel-pop.show{display:block}
+.csel-opt{padding:.6rem .7rem;font-size:.8rem;font-family:'DM Mono',monospace;color:var(--text);cursor:pointer;white-space:nowrap;border-bottom:1px solid var(--border)}
+.csel-opt:last-child{border-bottom:none}
+.csel-opt.on{color:var(--accent);font-weight:700}
+.csel-opt:active{background:var(--surface2)}
 .caja-table th{text-align:left;color:var(--muted);font-weight:500;font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border)}
 .caja-table td{padding:.42rem .5rem;border-bottom:1px solid var(--surface2)}
 .caja-table th.num,.caja-table td.num{text-align:right;white-space:nowrap}
@@ -2334,6 +2421,24 @@ tr.row-lowstock td{background:#f59e0b08}
 </style>
 </head>
 <body>
+
+<!-- ══ Pantalla de login (gate de acceso) ══
+     Tapa la app hasta que haya sesión iniciada. Solo aparece si la nube está
+     configurada y no hay sesión guardada. Una vez logueado, persiste y la app
+     funciona también offline (ver authGateRefresh en SUPABASE.JS). -->
+<div id="authGate" style="display:none;position:fixed;inset:0;z-index:99999;background:#0b0f14;flex-direction:column;align-items:center;justify-content:center;padding:1.5rem">
+  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:.7rem;text-align:center">
+    <div style="font-size:2.4rem">🔒</div>
+    <h2 style="margin:0;font-size:1.25rem;color:#e6edf3">Iniciar sesión</h2>
+    <p style="margin:0 0 .3rem;font-size:.8rem;color:#8b98a5">Ingresá con tu usuario para usar la app.</p>
+    <input type="email" id="gateEmail" placeholder="Email" autocomplete="email" style="padding:.7rem;border-radius:8px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font-size:.95rem">
+    <input type="password" id="gatePass" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')authGateLogin()" style="padding:.7rem;border-radius:8px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font-size:.95rem">
+    <div id="gateCaptcha" style="display:flex;justify-content:center;min-height:1px"></div>
+    <button onclick="authGateLogin()" style="padding:.75rem;border-radius:8px;border:none;background:#2ea043;color:#fff;font-size:.95rem;font-weight:600;cursor:pointer">🔑 Entrar</button>
+    <div id="gateStatus" style="min-height:1.1rem;font-size:.78rem;color:#f0883e"></div>
+    <button onclick="authGateConfig()" style="background:none;border:none;color:#8b98a5;font-size:.74rem;text-decoration:underline;cursor:pointer">⚙ Configurar conexión</button>
+  </div>
+</div>
 
 <!-- ══ TAB BAR ══ -->
 <nav class="tab-bar" id="tabBar">
@@ -2370,6 +2475,7 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="home-hero">
       <h1>OP-BAYRES<br><span>CENTRAL</span></h1>
       <p>subí el Excel del stock → cargá o sumá un ingreso</p>
+      <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" type="button">☀️ Modo claro</button>
     </div>
     <div class="upload-section">
       <div class="upload-card" id="cardA" ondragover="drag(event,'A')" ondragleave="undrag('A')" ondrop="drop(event,'A')">
@@ -2487,12 +2593,39 @@ tr.row-lowstock td{background:#f59e0b08}
         Si no hay internet, seguí usando el botón de arriba.
       </p>
       <div class="sb-config">
-        <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
-        <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
-        <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
-        <div class="sb-btn-row">
-          <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
-          <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+        <!-- Candado anti-miradas: con la nube ya conectada, las claves quedan
+             ocultas detrás de una contraseña (sbLockRefresh, SUPABASE.JS). -->
+        <div id="sbLockBox" style="display:none">
+          <p style="font-size:.7rem;color:var(--muted);margin:0 0 .45rem">
+            ✅ Conectado a la nube — tienda «<span id="sbLockNs"></span>» ·
+            clave guardada (termina en <span id="sbLockTail"></span>)
+          </p>
+          <button class="btn-backup" onclick="sbUnlockConfig()" style="width:100%;padding:.5rem;justify-content:center">
+            🔒 Ver / editar conexión
+          </button>
+        </div>
+        <div id="sbLoginBox" style="display:none;flex-direction:column;gap:.4rem">
+          <div id="sbSessionInfo" style="display:none">
+            <p style="font-size:.7rem;color:var(--muted);margin:0 0 .3rem">👤 Sesión activa: <b><span id="sbSessionEmail"></span></b></p>
+            <button class="btn-backup" onclick="sbLogout()" style="width:100%;padding:.5rem;justify-content:center">Cerrar sesión</button>
+          </div>
+          <div id="sbLoginForm" style="display:none;flex-direction:column;gap:.4rem">
+            <p style="font-size:.7rem;color:var(--muted);margin:0 0 .2rem">Ingresá con tu usuario para sincronizar:</p>
+            <input type="email" id="sbLoginEmail" placeholder="Email" autocomplete="email">
+            <input type="password" id="sbLoginPass" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')sbLogin()">
+            <div id="sbLoginCaptcha" style="display:flex;justify-content:center;min-height:1px"></div>
+            <button class="btn-backup" onclick="sbLogin()" style="padding:.5rem;justify-content:center">🔑 Iniciar sesión</button>
+          </div>
+        </div>
+        <div id="sbConfigBox" style="display:flex;flex-direction:column;gap:.4rem">
+          <input type="text" id="sbUrl" placeholder="URL del proyecto (https://xxxxx.supabase.co)" autocomplete="off">
+          <input type="password" id="sbKey" placeholder="anon public key" autocomplete="off">
+          <input type="text" id="sbNs" placeholder="ID de tienda (default)" autocomplete="off">
+          <div class="sb-btn-row">
+            <button class="btn-backup" onclick="scSaveConfigFromUI()">💾 Guardar config</button>
+            <button class="btn-backup" onclick="scTestConnection()">🔌 Probar</button>
+            <button class="btn-backup" id="sbHideBtn" onclick="sbHideConfig()" style="display:none">🔒 Ocultar</button>
+          </div>
         </div>
         <button class="btn-backup btn-backup-primary" onclick="publishCatalog()" style="width:100%;padding:.6rem;justify-content:center">
           ☁️⬆ Publicar catálogo a la nube
@@ -3045,6 +3178,8 @@ tr.row-lowstock td{background:#f59e0b08}
       <input type="number" id="cajaRateInput" min="0" step="0.01" placeholder="cotización"
         onchange="setCajaRate(this.value)">
       <span>ARS</span>
+      <button type="button" class="caja-rate-fetch" onclick="fetchDolarBlueInto('caja')"
+        title="Traer el dólar blue (venta) del día automáticamente">🔄</button>
     </div>
     <button class="btn-orders primary" onclick="openMovForm()">➕ Movimiento</button>
   </div>
@@ -3265,7 +3400,11 @@ tr.row-lowstock td{background:#f59e0b08}
           </div>
           <div>
             <label>Tipo de cambio (1 USD =)</label>
-            <input type="number" id="docTC" min="0" step="0.01">
+            <div style="display:flex;gap:.4rem;align-items:center">
+              <input type="number" id="docTC" min="0" step="0.01" style="flex:1" oninput="this.dataset.touched='1'">
+              <button type="button" class="caja-rate-fetch" onclick="fetchDolarBlueInto('doc')"
+                title="Traer el dólar blue (venta) del día automáticamente">🔄</button>
+            </div>
           </div>
         </div>
         <div>
@@ -3325,6 +3464,14 @@ tr.row-lowstock td{background:#f59e0b08}
           </select>
         </div>
         <div>
+          <label>Domicilio <span style="opacity:.6;font-weight:400">(opcional)</span></label>
+          <input type="text" id="clientFormDomicilio" placeholder="Dirección del cliente" autocomplete="off">
+        </div>
+        <div>
+          <label>Teléfono <span style="opacity:.6;font-weight:400">(opcional)</span></label>
+          <input type="tel" id="clientFormTelefono" placeholder="Teléfono del cliente" autocomplete="off">
+        </div>
+        <div>
           <label>Notas internas (no las ven los vendedores)</label>
           <textarea id="clientFormNotes" rows="4" placeholder="Info del cliente para no olvidar..."></textarea>
         </div>
@@ -3367,8 +3514,9 @@ tr.row-lowstock td{background:#f59e0b08}
         </div>
         <div id="movClientRow">
           <label>Cliente (la cobranza baja su deuda)</label>
-          <input type="text" id="movClient" list="movClientsDL" placeholder="Nombre del cliente" autocomplete="off">
-          <datalist id="movClientsDL"></datalist>
+          <input type="text" id="movClient" placeholder="Nombre del cliente" autocomplete="off"
+            oninput="movClientFilter(this.value)" onfocus="movClientFilter(this.value)" onblur="movClientBlurLater()">
+          <div id="movClientResults" class="mov-client-results"></div>
         </div>
         <div>
           <label>Cuenta</label>
@@ -3397,6 +3545,30 @@ tr.row-lowstock td{background:#f59e0b08}
     <div class="ov-foot">
       <button class="ov-btn" onclick="closeMovForm()">Cancelar</button>
       <button class="ov-btn primary" onclick="saveMovForm()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: pedir texto (reemplaza al prompt() del navegador) ══ -->
+<div id="appPromptOverlay" class="app-modal-overlay" style="display:none" onclick="if(event.target===this)_appPromptClose(null)">
+  <div class="app-modal">
+    <div class="app-modal-title" id="appPromptTitle"></div>
+    <input type="text" id="appPromptInput" class="app-modal-input" autocomplete="off"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();_appPromptClose(this.value);}else if(event.key==='Escape'){_appPromptClose(null);}">
+    <div class="app-modal-actions">
+      <button class="app-modal-btn app-modal-cancel" onclick="_appPromptClose(null)">Cancelar</button>
+      <button class="app-modal-btn app-modal-ok" onclick="_appPromptClose(document.getElementById('appPromptInput').value)">Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: confirmar (reemplaza al confirm() del navegador) ══ -->
+<div id="appConfirmOverlay" class="app-modal-overlay" style="display:none" onclick="if(event.target===this)_appConfirmClose(false)">
+  <div class="app-modal">
+    <div class="app-modal-msg" id="appConfirmMsg"></div>
+    <div class="app-modal-actions">
+      <button class="app-modal-btn app-modal-cancel" id="appConfirmCancel" onclick="_appConfirmClose(false)">Cancelar</button>
+      <button class="app-modal-btn app-modal-ok" id="appConfirmOk" onclick="_appConfirmClose(true)">Aceptar</button>
     </div>
   </div>
 </div>
@@ -4222,6 +4394,9 @@ function addIngestHistoryEntry(entry) {
   const history = loadIngestHistory();
   history.push(entry);
   saveIngestHistory(history);
+  if (typeof addBreadcrumb === 'function') {
+    addBreadcrumb('stock.ingest', { mode: entry.mode, products: entry.productCount, units: entry.totalUnits, file: entry.filename });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -5799,7 +5974,7 @@ function switchTab(tab) {
   if (tab === 'precios') initPricesTab();
   if (tab === 'pedidos') renderOrdersTab();
   if (tab === 'analisis') renderAnalyticsTab();
-  if (tab === 'caja') renderCajaTab();
+  if (tab === 'caja') { renderCajaTab(); if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue(); }
 }
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -6346,8 +6521,8 @@ function deleteDecision(memKey) {
   toast('Decisión eliminada de la memoria', 'ok');
 }
 
-function clearAllDecisions() {
-  if (!confirm('¿Borrar todas las decisiones guardadas?')) return;
+async function clearAllDecisions() {
+  if (!await appConfirm({ message: '¿Borrar todas las decisiones guardadas?', okText: 'Borrar', danger: true })) return;
   state.dupMemory = {};
   saveDupMemory(); updateMemBadge(); renderDecisions();
   toast('Memoria borrada', 'ok');
@@ -7591,9 +7766,9 @@ function retryAllPendingInference() {
 }
 
 // ── Limpiar pendientes manualmente ──
-function clearInferPending() {
+async function clearInferPending() {
   if (!state.inferPending.length) return;
-  if (!confirm(`¿Borrar los ${state.inferPending.length} pendientes de inferencia?`)) return;
+  if (!await appConfirm({ message: `¿Borrar los ${state.inferPending.length} pendientes de inferencia?`, okText: 'Borrar', danger: true })) return;
   state.inferPending = [];
   saveInferPending();
   if (typeof renderInferPendingBadge === 'function') renderInferPendingBadge();
@@ -7774,9 +7949,9 @@ function closeAssignRubro() {
 }
 
 // Crear rubro nuevo desde el overlay
-function createRubroFromAssign() {
+async function createRubroFromAssign() {
   if (!_assigningPendingKey) return;
-  const name = prompt('Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):');
+  const name = await appPrompt({ title: 'Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):', placeholder: 'Nombre del rubro' });
   if (!name) return;
   const rubroN = normalizeRubro(name);
   if (state.rubrosMultis[rubroN]) {
@@ -8223,9 +8398,9 @@ function saveRubroEdit() {
   toast(msg, 'ok');
 }
 
-function deleteRubro() {
+async function deleteRubro() {
   if (!_editingRubro) return;
-  if (!confirm(`¿Borrar el rubro "${_editingRubro}"?\n\nLos productos con este rubro quedarán sin multiplicadores (a menos que tengan personalización).`)) return;
+  if (!await appConfirm({ message: `¿Borrar el rubro "${_editingRubro}"?\n\nLos productos con este rubro quedarán sin multiplicadores (a menos que tengan personalización).`, okText: 'Borrar', danger: true })) return;
   delete state.rubrosMultis[_editingRubro];
   saveRubrosMultis();
   markPricesDirty();
@@ -8236,8 +8411,8 @@ function deleteRubro() {
 }
 
 // Agregar rubro nuevo
-function openNewRubro() {
-  const name = prompt('Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):');
+async function openNewRubro() {
+  const name = await appPrompt({ title: 'Nombre del rubro nuevo (ej: PROTECTOR DE PANTALLA):', placeholder: 'Nombre del rubro' });
   if (!name) return;
   const rubroN = normalizeRubro(name);
   if (state.rubrosMultis[rubroN]) {
@@ -8545,9 +8720,9 @@ function saveProductOverride() {
   toast(hasAny ? 'Personalización guardada ✓' : 'Personalización eliminada (vuelve al rubro) ✓', 'ok');
 }
 
-function clearProductOverride() {
+async function clearProductOverride() {
   if (!_editingProductKey) return;
-  if (!confirm('¿Quitar la personalización y volver a usar el multiplicador del rubro?')) return;
+  if (!await appConfirm({ message: '¿Quitar la personalización y volver a usar el multiplicador del rubro?', okText: 'Quitar', danger: true })) return;
   delete state.prices[_editingProductKey];
   savePrices();
   markPricesDirty();
@@ -8558,8 +8733,8 @@ function clearProductOverride() {
 }
 
 // ── Reset general ──
-function resetAllPrices() {
-  if (!confirm(`¿Borrar TODAS las personalizaciones de productos (${Object.keys(state.prices).length})?\n\nLos rubros y el factor Distribuidor se mantienen.`)) return;
+async function resetAllPrices() {
+  if (!await appConfirm({ message: `¿Borrar TODAS las personalizaciones de productos (${Object.keys(state.prices).length})?\n\nLos rubros y el factor Distribuidor se mantienen.`, okText: 'Borrar', danger: true })) return;
   state.prices = {};
   savePrices();
   markPricesDirty();
@@ -9220,15 +9395,16 @@ function exportForVendor(list) {
 // ════════════════════════════════════════════════════════════════════
 
 const GRAN_RESET_PASS = 'opbayresgranreset';
-const GRAN_RESET_KEEP = ['sb_config', 'docconfig'];
+const GRAN_RESET_KEEP = ['sb_config', 'docconfig', 'sb-dxntcbssxjxtxznkdsot-auth-token', 'event_log_queue'];
 
 async function granReset() {
-  const pass = prompt(
-    '🧨 GRAN RESET\n\n' +
-    'Esto borra TODOS los datos de la app (stock, precios, pedidos, clientes, ' +
-    'caja y los datos de prueba de la nube) para empezar de cero.\n\n' +
-    'Para continuar, escribí la contraseña:'
-  );
+  const pass = await appPrompt({
+    title: '🧨 GRAN RESET\n\n' +
+      'Esto borra TODOS los datos de la app (stock, precios, pedidos, clientes, ' +
+      'caja y los datos de prueba de la nube) para empezar de cero.\n\n' +
+      'Para continuar, escribí la contraseña:',
+    password: true
+  });
   if (pass === null) return;
   if (pass.trim() !== GRAN_RESET_PASS) {
     toast('Contraseña incorrecta — no se borró nada.', 'err');
@@ -9247,6 +9423,11 @@ async function granReset() {
   msg += '\nSe conservan la conexión a la nube y los datos del emisor.\n' +
     'Antes de borrar se descarga un backup completo de seguridad.\n\n¿Borrar todo?';
   if (!confirm(msg)) return;
+
+  // 0. Registrar el gran reset en la bitácora ANTES de borrar (y subirlo ya,
+  //    mientras todavía hay conexión). La cola se conserva (GRAN_RESET_KEEP).
+  logEvent('gran_reset', { severity: 'warn', summary: 'Gran reset ejecutado (borrado total)', meta: { cloud } });
+  try { if (cloud) await _logFlush(); } catch (e) {}
 
   // 1. Backup de seguridad (best-effort: si no hay nada que exportar, sigue)
   try { exportBackup(false); } catch (e) { console.warn('granReset backup:', e); }
@@ -9685,7 +9866,11 @@ function scClient() {
 
   try {
     _sbClient = window.supabase.createClient(c.url, c.anonKey, {
-      auth: { persistSession: false },
+      auth: {
+        persistSession: true,        // guarda la sesión en localStorage (login por persona)
+        autoRefreshToken: true,      // renueva el token solo cuando hay internet
+        storageKey: SB_AUTH_KEY,     // sb-<ref>-auth-token (lo lee el gate)
+      },
     });
     _sbClientKey = key;
     return _sbClient;
@@ -9715,7 +9900,222 @@ function scSaveConfigFromUI() {
   scSaveConfig({ url, anonKey, ns });
   scStatus('Configuración guardada ✓', 'ok');
   toast('Configuración de nube guardada ✓', 'ok');
+  _sbCfgUnlocked = false;   // recién guardada → vuelve a quedar oculta
+  sbLockRefresh();
   if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+}
+
+// ── Candado anti-miradas de la config de nube ──
+// Con la nube ya conectada, la sección de URL/key/tienda se reemplaza por un
+// resumen y solo se abre con contraseña. Igual que la del gran reset, es un
+// guard contra miradas ajenas en la pantalla, NO seguridad real (el código
+// es público); la protección de fondo son las policies de la base.
+const SB_CFG_PASS = 'opbayressincnube';
+let _sbCfgUnlocked = false;
+
+function sbLockRefresh() {
+  const lock     = document.getElementById('sbLockBox');
+  const box      = document.getElementById('sbConfigBox');
+  const loginBox = document.getElementById('sbLoginBox');
+  if (!lock || !box) return;
+  const c = scGetConfig();
+  const hasCfg = !!(c.url && c.anonKey);
+  const locked = hasCfg && !_sbCfgUnlocked;
+  lock.style.display = locked ? '' : 'none';
+  box.style.display  = locked ? 'none' : 'flex';
+  const hideBtn = document.getElementById('sbHideBtn');
+  if (hideBtn) hideBtn.style.display = (!locked && hasCfg) ? '' : 'none';
+  if (locked) {
+    const ns   = document.getElementById('sbLockNs');
+    const tail = document.getElementById('sbLockTail');
+    if (ns)   ns.textContent   = c.ns || 'default';
+    if (tail) tail.textContent = '…' + c.anonKey.slice(-4);
+  }
+  if (loginBox) {
+    loginBox.style.display = (hasCfg && locked) ? 'flex' : 'none';
+    const sess        = _sbGetSession();
+    const loginForm   = document.getElementById('sbLoginForm');
+    const sessionInfo = document.getElementById('sbSessionInfo');
+    if (loginForm)   loginForm.style.display   = sess ? 'none' : 'flex';
+    if (sessionInfo) sessionInfo.style.display = sess ? ''     : 'none';
+    if (!sess) _ensureCaptcha('sbLoginCaptcha');
+    const emailEl = document.getElementById('sbSessionEmail');
+    if (emailEl && sess) emailEl.textContent = sess.user?.email || '';
+  }
+}
+
+async function sbUnlockConfig() {
+  const pass = await appPrompt({ title: 'Contraseña para ver/editar la conexión:', password: true });
+  if (pass === null) return;
+  if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
+  _sbCfgUnlocked = true;
+  sbLockRefresh();
+}
+
+function sbHideConfig() {
+  _sbCfgUnlocked = false;
+  sbLockRefresh();
+}
+
+// ── Login / sesión de usuario ──
+const SB_AUTH_KEY = 'sb-dxntcbssxjxtxznkdsot-auth-token';
+let _authGateBypass = false;   // true cuando se abre la config desde el gate
+
+// Sesión "válida ahora" (para el resumen): exige que el token no esté vencido.
+function _sbGetSession() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s?.user) return null;
+    if (s.expires_at && (Date.now() / 1000) > s.expires_at) return null;
+    return s;
+  } catch { return null; }
+}
+// ¿Hay una sesión GUARDADA? (sin exigir token vigente) — sirve para el gate:
+// offline el token puede estar vencido pero la persona ya se identificó; el
+// refresh token deja que supabase-js lo renueve al recuperar internet.
+function _sbHasStoredSession() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    return !!(s && s.user && s.refresh_token);
+  } catch { return false; }
+}
+// ── Captcha de login (auditoría F2): Cloudflare Turnstile ──
+// Protege el inicio de sesión contra fuerza bruta. El token viaja a Supabase
+// en signInWithPassword({ options:{ captchaToken } }); Supabase lo valida con
+// la clave SECRETA (guardada SOLO en el server, nunca acá). La Site Key es
+// pública por diseño. Si el script no carga (sin internet / bloqueado), el
+// login sigue intentándose sin token: con el captcha apagado en el server no
+// molesta, y si está prendido Supabase devuelve un error claro que mostramos.
+const TURNSTILE_SITEKEY = '0x4AAAAAADn5nDWSnFUczyWP';
+let _tsLoading = null;
+function _loadTurnstile() {
+  if (window.turnstile) return Promise.resolve(true);
+  if (_tsLoading) return _tsLoading;
+  _tsLoading = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true; s.defer = true;
+    s.onload  = () => resolve(true);
+    s.onerror = () => { _tsLoading = null; resolve(false); };
+    document.head.appendChild(s);
+  });
+  return _tsLoading;
+}
+async function _ensureCaptcha(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el || el.dataset.tsId) return;          // sin contenedor o ya renderizado
+  const ok = await _loadTurnstile();
+  if (!ok || !window.turnstile || el.dataset.tsId) return;
+  try {
+    const id = window.turnstile.render(el, {
+      sitekey: TURNSTILE_SITEKEY,
+      callback:           (t) => { el._captchaToken = t;  },
+      'expired-callback': ()  => { el._captchaToken = ''; },
+      'error-callback':   ()  => { el._captchaToken = ''; },
+    });
+    el.dataset.tsId = id;
+  } catch (e) { /* si falla el render, el login sigue sin token */ }
+}
+function _captchaToken(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return '';
+  if (el._captchaToken) return el._captchaToken;
+  try {
+    if (window.turnstile && el.dataset.tsId)
+      return window.turnstile.getResponse(el.dataset.tsId) || '';
+  } catch (e) {}
+  return '';
+}
+function _captchaReset(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el._captchaToken = '';
+  try { if (window.turnstile && el.dataset.tsId) window.turnstile.reset(el.dataset.tsId); } catch (e) {}
+}
+
+// Login compartido por el gate y por el formulario de la sección de conexión.
+async function _sbDoLogin(email, pass, captchaToken) {
+  if (!email || !pass) return { ok:false, msg:'Ingresá email y contraseña.' };
+  if (typeof scLibReady === 'function' && !scLibReady())
+    return { ok:false, msg:'La nube no cargó (¿sin internet?). Conectate e intentá de nuevo.' };
+  const client = scClient();
+  if (!client) return { ok:false, msg:'Primero configurá la conexión a la nube.' };
+  const options = captchaToken ? { captchaToken } : undefined;
+  const { error } = await client.auth.signInWithPassword({ email, password: pass, options });
+  if (error) {
+    const m = (error.message || '').toLowerCase();
+    if (m.includes('captcha'))
+      return { ok:false, msg:'Completá la verificación "no soy un robot" e intentá de nuevo.' };
+    return { ok:false, msg:'No se pudo iniciar sesión. Verificá email y contraseña.' };
+  }
+  addBreadcrumb('login', { email });
+  try { setTimeout(_logFlush, 1000); } catch (e) {}   // subir lo que haya quedado en cola
+  return { ok:true };
+}
+
+// Gate de acceso: tapa la app si la nube está configurada y no hay sesión.
+function authGateRefresh() {
+  const gate = document.getElementById('authGate');
+  if (!gate) return;
+  if (_authGateBypass) { gate.style.display = 'none'; document.body.style.overflow = ''; return; }
+  const c = scGetConfig();
+  const cloudOn = !!(c.url && c.anonKey);
+  const show = cloudOn && !_sbHasStoredSession();
+  gate.style.display = show ? 'flex' : 'none';
+  document.body.style.overflow = show ? 'hidden' : '';
+  if (show) _ensureCaptcha('gateCaptcha');
+}
+async function authGateLogin() {
+  const email = document.getElementById('gateEmail')?.value?.trim();
+  const pass  = document.getElementById('gatePass')?.value;
+  const st = document.getElementById('gateStatus');
+  if (st) st.textContent = 'Iniciando sesión…';
+  const r = await _sbDoLogin(email, pass, _captchaToken('gateCaptcha'));
+  _captchaReset('gateCaptcha');
+  if (!r.ok) { if (st) st.textContent = r.msg; return; }
+  if (st) st.textContent = '';
+  const p = document.getElementById('gatePass'); if (p) p.value = '';
+  _authGateBypass = false;
+  authGateRefresh();
+  if (typeof sbLockRefresh === 'function') sbLockRefresh();
+  if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+}
+// Escape para configurar la conexión (URL/key) cuando aún no hay con qué
+// loguearse. Protegido por la contraseña del candado.
+async function authGateConfig() {
+  const pass = await appPrompt({ title: 'Contraseña para configurar la conexión:', password: true });
+  if (pass === null) return;
+  if (pass.trim() !== SB_CFG_PASS) { toast('Contraseña incorrecta.', 'err'); return; }
+  _authGateBypass = true;
+  _sbCfgUnlocked = true;
+  authGateRefresh();
+  if (typeof sbLockRefresh === 'function') sbLockRefresh();
+  const box = document.getElementById('sbConfigBox');
+  if (box && box.scrollIntoView) box.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+async function sbLogin() {
+  const email = document.getElementById('sbLoginEmail')?.value?.trim();
+  const pass  = document.getElementById('sbLoginPass')?.value;
+  scStatus('Iniciando sesión…', '');
+  const r = await _sbDoLogin(email, pass, _captchaToken('sbLoginCaptcha'));
+  _captchaReset('sbLoginCaptcha');
+  if (!r.ok) { scStatus(r.msg, 'err'); return; }
+  scStatus('Sesión iniciada ✓', 'ok');
+  authGateRefresh();
+  sbLockRefresh();
+}
+async function sbLogout() {
+  const client = scClient();
+  if (client) await client.auth.signOut();
+  scStatus('Sesión cerrada.', '');
+  _authGateBypass = false;
+  authGateRefresh();
+  sbLockRefresh();
 }
 
 // ── Probar conexión ──
@@ -9773,6 +10173,27 @@ function _markCatalogPublishPending() {
   }
 }
 
+// ── Guard anti-wipe del catálogo (A-3) ──
+// Evita pisar un catálogo bueno con uno drásticamente más chico (p. ej. tras
+// un import malo, un "resetear stock" a medio hacer, o un dispositivo con
+// estado viejo de "central compartida"). Mismo criterio que el guard del
+// vendedor (applyVendorData): caída drástica = antes ≥20 productos y el nuevo
+// trae menos de la mitad. En manual pide confirmación; en auto NO publica y
+// avisa (queda pendiente para publicar a mano tras revisar).
+const CATALOG_DROP_MIN   = 20;   // umbral mínimo para que el guard actúe
+const CATALOG_DROP_RATIO = 0.5;  // "menos de la mitad" del publicado
+
+function _lastPublishedCount() {
+  const v = parseInt(Store.get('catalog_last_pub_count'), 10);
+  return isNaN(v) ? null : v;
+}
+function _setLastPublishedCount(n) {
+  try { Store.set('catalog_last_pub_count', String(n)); } catch (e) {}
+}
+function _isDrasticCatalogDrop(prev, next) {
+  return prev != null && prev >= CATALOG_DROP_MIN && next < prev * CATALOG_DROP_RATIO;
+}
+
 async function publishCatalog(opts = {}) {
   // Modo auto: disparado en segundo plano por un cambio de stock. Silencioso
   // (sin toasts ni status ruidoso); si algo falla, queda pendiente y se
@@ -9820,6 +10241,38 @@ async function publishCatalog(opts = {}) {
   const c = scGetConfig();
   if (!auto) scStatus('Publicando a la nube…', '');
   try {
+    // ── Guard anti-wipe: comparar el conteo nuevo contra el último publicado ──
+    const nuevoCount = built.count || 0;
+    let prev = _lastPublishedCount();
+    if (!auto) {
+      // En manual, además del recordado local, chequeamos el conteo REAL en la
+      // nube (así un dispositivo con estado viejo tampoco pisa un catálogo bueno).
+      try {
+        const { data: cur } = await client
+          .from('catalog').select('payload').eq('id', c.ns).maybeSingle();
+        const cloudCount = (cur && cur.payload && Array.isArray(cur.payload.stock))
+          ? cur.payload.stock.length : null;
+        if (cloudCount != null) prev = (prev == null) ? cloudCount : Math.max(prev, cloudCount);
+      } catch (e) { /* sin red o sin fila: seguimos con el recordado local */ }
+    }
+    if (_isDrasticCatalogDrop(prev, nuevoCount)) {
+      if (auto) {
+        // Automático: NO pisar. Avisar y dejar pendiente para revisión manual.
+        _catalogPublishPending = true;
+        scStatus(`⚠️ Publicación automática frenada: el catálogo bajó de ${prev} a ${nuevoCount} productos. ` +
+                 `Revisá el stock y publicá a mano si es correcto.`, 'err');
+        return;
+      }
+      if (!confirm(
+        `⚠️ Vas a publicar ${nuevoCount} producto(s), pero el catálogo publicado tiene ${prev}.\n\n` +
+        `Esto reemplaza el catálogo de TODOS los vendedores. Si fue un error (import a medias, ` +
+        `stock sin cargar), cancelá y revisá el stock.\n\n¿Publicar igual?`
+      )) {
+        scStatus('Publicación cancelada (caída inusual de productos).', '');
+        return;
+      }
+    }
+
     const { error } = await client
       .from('catalog')
       .upsert({
@@ -9830,6 +10283,7 @@ async function publishCatalog(opts = {}) {
 
     if (error) {
       console.error('publishCatalog error:', error);
+      logEvent('catalog.publish.fail', { severity: 'error', summary: 'Error al publicar catálogo: ' + (error.message || '?'), error, meta: { auto, count: built.count || 0 } });
       if (auto) {
         _markCatalogPublishPending();
       } else {
@@ -9842,6 +10296,8 @@ async function publishCatalog(opts = {}) {
 
     // Éxito: ya no hay nada pendiente.
     _catalogPublishPending = false;
+    _setLastPublishedCount(built.count || 0); // recordar para el guard anti-wipe
+    addBreadcrumb('catalog.publish', { count: built.count || 0, auto });
 
     const hora = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
     if (auto) {
@@ -9854,6 +10310,7 @@ async function publishCatalog(opts = {}) {
     }
   } catch (e) {
     console.error('publishCatalog exception:', e);
+    logEvent('catalog.publish.fail', { severity: 'error', summary: 'Excepción al publicar catálogo', error: e, meta: { auto, count: built.count || 0 } });
     if (auto) {
       _markCatalogPublishPending();
     } else {
@@ -9982,6 +10439,7 @@ async function _doPullOrders(opts = {}) {
     const { data, error } = await q;
     if (error) {
       console.error('pullOrders error:', error);
+      logEvent('orders.pull.fail', { severity: 'error', summary: 'Error al traer pedidos: ' + (error.message || '?'), error, meta: { silent } });
       toast('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       scStatus('Error al traer pedidos: ' + (error.message || 'desconocido'), 'err');
       return;
@@ -10034,6 +10492,7 @@ async function _doPullOrders(opts = {}) {
     scStatus(msg, 'ok');
   } catch (e) {
     console.error('pullOrders exception:', e);
+    logEvent('orders.pull.fail', { severity: 'error', summary: 'Excepción al traer pedidos', error: e, meta: { silent } });
     toast('Error de red al traer pedidos: ' + (e.message || 'sin conexión'), 'err');
     scStatus('Error de red: ' + (e.message || 'sin conexión'), 'err');
   }
@@ -10048,6 +10507,8 @@ function scInitUI() {
   if (u) u.value = c.url;
   if (k) k.value = c.anonKey;
   if (n) n.value = c.ns;
+  sbLockRefresh();
+  authGateRefresh();
 
   if (!scLibReady()) {
     scStatus('Modo offline: la nube no cargó. La app funciona igual; usá archivos.', '');
@@ -10073,6 +10534,292 @@ window.addEventListener('online', retryCatalogPublishIfPending);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') retryCatalogPublishIfPending();
 });
+
+
+// ════════════════════════════════════════════════════════════════════
+// LOG.JS — StockMerger — bitácora de diagnóstico (errores + contexto)
+// ════════════════════════════════════════════════════════════════════
+//
+// NO es un log visible para el usuario: es una bitácora REMOTA para
+// diagnosticar cuando alguien reporta un error. Captura los crashes de JS
+// (window.onerror / unhandledrejection) y los fallos de operaciones
+// riesgosas, con stack, contexto del dispositivo y "migas de pan" (las
+// últimas acciones antes del error). Cada error le muestra al usuario un
+// código corto (ref) para que lo cite al avisar; nosotros lo buscamos en la
+// tabla `event_log` de Supabase por la Management API.
+//
+// Best-effort total: NUNCA tira excepción ni rompe la app. Si no hay nube,
+// no hace nada (modo file-only intacto). Si hay nube pero falla la subida
+// (offline / sin sesión), el evento queda en una cola local y se reintenta
+// al volver la conexión (igual que la cola de pedidos).
+// ════════════════════════════════════════════════════════════════════
+
+const LOG_APP       = 'merger';   // 'merger' | 'vendor'
+const LOG_ROLE      = 'central';  // rol fijo de esta app
+const LOG_QUEUE_KEY = 'event_log_queue';
+const LOG_QUEUE_MAX = 200;        // tope de la cola local (no crece sin freno)
+const LOG_CRUMB_MAX = 25;         // migas de pan en memoria
+
+let _logCrumbs    = [];           // ring buffer de acciones recientes (en memoria)
+let _logSuppress  = false;        // anti-recursión: no loguear errores del propio logger
+let _logSwName    = '';           // nombre del cache del SW (≈ versión publicada)
+let _logFlushing  = false;        // evita subidas solapadas
+let _logLastToast = 0;            // throttle del aviso al usuario
+const _logRecent  = Object.create(null); // dedupe de errores idénticos
+
+// Nombre del cache del SW = proxy de la versión publicada (se actualiza solo
+// en cada deploy). Se lee una vez, async, al cargar.
+try {
+  if (window.caches && caches.keys) {
+    caches.keys().then(ks => {
+      _logSwName = (ks && (ks.find(k => /stock/i.test(k)) || ks[0])) || '';
+    }).catch(() => {});
+  }
+} catch (e) {}
+
+// Migas de pan: registra una acción significativa. NO se sube sola; viaja
+// adjunta al próximo error para reconstruir qué pasó antes.
+function addBreadcrumb(event, data) {
+  try {
+    _logCrumbs.push({ t: new Date().toISOString(), event, data: (data == null ? null : data) });
+    if (_logCrumbs.length > LOG_CRUMB_MAX) _logCrumbs.shift();
+  } catch (e) {}
+}
+
+// Código de referencia corto (ej. "A3F9") que se le muestra al usuario.
+function _logRef() {
+  try {
+    const n = (window.crypto && crypto.getRandomValues)
+      ? crypto.getRandomValues(new Uint32Array(1))[0]
+      : Math.floor(Math.random() * 0xffffffff);
+    return n.toString(36).toUpperCase().slice(-4).padStart(4, '0');
+  } catch (e) {
+    return String(Date.now()).slice(-4);
+  }
+}
+
+// Usuario guardado (aunque el token esté vencido) para llenar 'actor'.
+function _logStoredUser() {
+  try {
+    const raw = localStorage.getItem(SB_AUTH_KEY);
+    return raw ? (JSON.parse(raw)?.user || null) : null;
+  } catch (e) { return null; }
+}
+function _logActor() {
+  try {
+    const u = _logStoredUser();
+    if (!u) return '';
+    const m = u.app_metadata || {};
+    if (m.vendor_name || m.vendor_code) {
+      return (m.vendor_name || '') + (m.vendor_code ? ' (' + m.vendor_code + ')' : '');
+    }
+    return u.email || u.id || '';
+  } catch (e) { return ''; }
+}
+
+// Contexto del dispositivo (para diagnosticar sin estar ahí).
+function _logContext() {
+  const ctx = {};
+  try {
+    ctx.ua     = navigator.userAgent;
+    ctx.online = navigator.onLine;
+    ctx.url    = location.href;
+    ctx.lang   = navigator.language;
+    ctx.ver    = _logSwName;
+    if (window.screen) ctx.screen = screen.width + 'x' + screen.height;
+  } catch (e) {}
+  return ctx;
+}
+
+// Normaliza un Error (o lo que sea) a algo serializable, con stack.
+function _logErrInfo(err) {
+  try {
+    if (!err) return null;
+    if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack || '' };
+    if (typeof err === 'object') return { message: err.message || '', code: err.code || '', detail: String(err.detail || ''), stack: err.stack || '' };
+    return { message: String(err) };
+  } catch (e) { return null; }
+}
+
+// ── Cola local durable ──
+function _loadLogQueue() {
+  try {
+    const p = JSON.parse(localStorage.getItem(LOG_QUEUE_KEY) || '[]');
+    return Array.isArray(p) ? p : [];
+  } catch (e) { return []; }
+}
+function _saveLogQueue(q) {
+  try { localStorage.setItem(LOG_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+}
+
+// Registra un evento. opts: { severity, summary, meta, error }.
+// Devuelve el código de referencia (siempre, aunque la subida falle).
+function logEvent(event, opts) {
+  const o = opts || {};
+  const ref = _logRef();
+  try {
+    if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return ref; // sin nube: no registra
+    const meta = Object.assign({}, o.meta || {});
+    meta.ctx = _logContext();
+    meta.breadcrumbs = _logCrumbs.slice(-LOG_CRUMB_MAX);
+    if (o.error) meta.error = _logErrInfo(o.error);
+    const row = {
+      _qid:        ref + '-' + Date.now(),
+      ref,
+      ns:          (scGetConfig() || {}).ns || 'default',
+      app:         LOG_APP,
+      event:       String(event || '').slice(0, 120),
+      severity:    o.severity || 'info',
+      summary:     String(o.summary || '').slice(0, 4000),
+      meta,
+      actor:       _logActor(),
+      role:        LOG_ROLE,
+      occurred_at: new Date().toISOString(),
+    };
+    const q = _loadLogQueue();
+    q.push(row);
+    while (q.length > LOG_QUEUE_MAX) q.shift();   // tope: descarta lo más viejo
+    _saveLogQueue(q);
+    _logFlush();   // intento de subida inmediato (no se espera)
+  } catch (e) {
+    try { console.warn('logEvent:', e && e.message); } catch (_) {}
+  }
+  return ref;
+}
+
+// Sube lo que haya en la cola. Best-effort; requiere nube + sesión guardada.
+async function _logFlush() {
+  if (_logFlushing) return;
+  if (typeof scIsConfigured !== 'function' || !scIsConfigured() || !scLibReady()) return;
+  if (!_sbHasStoredSession()) return;            // sin sesión, RLS rechaza → esperar
+  const client = scClient();
+  if (!client) return;
+  if (!_loadLogQueue().length) return;
+  _logFlushing = true;
+  try {
+    const batch = _loadLogQueue().slice(0, 50);
+    const rows  = batch.map(r => { const x = Object.assign({}, r); delete x._qid; return x; });
+    const { error } = await client.from('event_log').insert(rows);
+    if (error) { try { console.warn('event_log flush:', error.message); } catch (_) {} return; }
+    const done = new Set(batch.map(r => r._qid));
+    _saveLogQueue(_loadLogQueue().filter(r => !done.has(r._qid)));
+  } catch (e) {
+    try { console.warn('event_log flush red:', e && e.message); } catch (_) {}
+  } finally {
+    _logFlushing = false;
+  }
+}
+
+// ── Captura automática de errores no atrapados ──
+// ── Aviso de error al usuario (tarjeta persistente con código + botones) ──
+// Nombre amigable de la app para los mensajes.
+const LOG_APP_NAME = (LOG_APP === 'merger') ? 'Central' : 'Vendedor';
+// Número de aviso por WhatsApp (ofuscado en base64 — el repo es PÚBLICO, esto
+// no es protección real, solo frena al curioso casual / robots simples).
+function _logWaNumber() { try { return atob('NTQ5MzUxNjUwNzY5OQ=='); } catch (e) { return ''; } }
+
+function _logReportText(ref) {
+  return 'App ' + LOG_APP_NAME + ' — error ref: ' + ref + ' — ' + new Date().toLocaleString('es-AR');
+}
+function _logCopy(text, btn) {
+  const done = () => { if (btn) { const o = btn.textContent; btn.textContent = '¡Copiado!'; setTimeout(() => { btn.textContent = o; }, 1500); } };
+  const fb = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta); done();
+    } catch (e) {}
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fb);
+    } else { fb(); }
+  } catch (e) { fb(); }
+}
+
+function _logShowRef(ref) {
+  try {
+    if (!document || !document.body) return;
+    const old = document.getElementById('logErrCard');
+    if (old) old.remove();
+    const text = _logReportText(ref);
+    const card = document.createElement('div');
+    card.id = 'logErrCard';
+    card.setAttribute('style', [
+      'position:fixed','left:12px','right:12px','top:12px','z-index:99999',
+      'max-width:520px','margin:0 auto','background:#1b1014','color:#fde2e2',
+      'border:1px solid #e57373','border-radius:12px','padding:14px',
+      'box-shadow:0 8px 30px rgba(0,0,0,.5)','font-family:inherit','font-size:14px'
+    ].join(';'));
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">' +
+        '<div style="font-weight:700">⚠️ Ocurrió un error</div>' +
+        '<button data-act="close" style="background:none;border:none;color:#fde2e2;font-size:20px;line-height:1;cursor:pointer;padding:0 2px">×</button>' +
+      '</div>' +
+      '<div style="margin:6px 0 2px">Código: <span style="font-weight:700;font-size:18px;letter-spacing:1px">' + ref + '</span></div>' +
+      '<div style="opacity:.8;font-size:12px;margin-bottom:10px">App ' + LOG_APP_NAME + ' · pasale este código a Julio para que lo revise.</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button data-act="wa" style="flex:1;min-width:140px;background:#25d366;color:#04310f;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer">💬 Avisar por WhatsApp</button>' +
+        '<button data-act="copy" style="background:#33252a;color:#fde2e2;border:1px solid #e57373;border-radius:8px;padding:10px 12px;font-weight:600;cursor:pointer">📋 Copiar</button>' +
+      '</div>';
+    card.addEventListener('click', (ev) => {
+      const act = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-act');
+      if (act === 'close') { card.remove(); }
+      else if (act === 'copy') { _logCopy(text, ev.target); }
+      else if (act === 'wa') {
+        const num = _logWaNumber();
+        if (!num) return;
+        const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent('Hola Julio, me salió un error en la app ' + LOG_APP_NAME + '. ' + text);
+        try { window.open(url, '_blank'); } catch (e) { location.href = url; }
+      }
+    });
+    document.body.appendChild(card);
+  } catch (e) {}
+}
+function _logHandleError(event, summary, errObj, extraMeta) {
+  if (_logSuppress) return;
+  _logSuppress = true;
+  try {
+    const sig = event + '|' + (summary || '');     // dedupe: mismo error en <10s no se reencola
+    const now = Date.now();
+    if (_logRecent[sig] && (now - _logRecent[sig]) < 10000) return;
+    _logRecent[sig] = now;
+    const ref = logEvent(event, { severity: 'error', summary, error: errObj, meta: extraMeta });
+    _logShowRef(ref);
+  } catch (e) {
+    try { console.warn('logHandleError:', e && e.message); } catch (_) {}
+  } finally {
+    _logSuppress = false;
+  }
+}
+
+try {
+  window.addEventListener('error', (e) => {
+    if (!e || (!e.message && !e.error)) return;    // ignora errores de carga de recursos
+    _logHandleError('error.uncaught', (e.message) || 'Error', e.error,
+      { source: e.filename, line: e.lineno, col: e.colno });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    const msg = (r && r.message) ? r.message : (r ? String(r) : 'Promesa rechazada');
+    _logHandleError('error.promise', msg, r, null);
+  });
+  window.addEventListener('online', () => { _logFlush(); });
+} catch (e) {}
+
+// Al cargar el módulo, intentar subir lo que haya quedado de antes.
+try { _logFlush(); } catch (e) {}
+
+// Disparador de PRUEBA (oculto): abrir la app con #logtest en la dirección
+// genera un error inofensivo que recorre el camino real (window.onerror →
+// event_log) y muestra el código de referencia. Sirve para verificar la
+// bitácora de punta a punta. Sin el marcador, no hace nada.
+try {
+  if (/[?#&]logtest/i.test(location.href)) {
+    setTimeout(() => { throw new Error('Prueba de bitácora (logtest) — ' + LOG_APP); }, 1500);
+  }
+} catch (e) {}
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -10297,6 +11044,14 @@ function _unmarkProcessing(localId) {
 // Devuelve { status, order?, warnings? } donde status ∈
 //   'imported' | 'replaced' | 'duplicate' | 'cancelled' | 'empty' | 'no_stock'
 // ════════════════════════════════════════════════════════════════════
+// Topes "anti-absurdo" de un pedido recibido. Espejan los del vendedor
+// (StockVendedor, addToOrder/updateOrderItem). Acá son DEFENSA EN PROFUNDIDAD:
+// un Excel roto o un payload manipulado no debe entrar crudo al descuento de
+// stock. Cantidades fuera de rango se recortan (con aviso); ítems de más se
+// descartan (con aviso). No reemplaza al clamp por stock que hace confirmar.
+const MAX_QTY_PER_LINE    = 100000; // unidades por producto
+const MAX_ITEMS_PER_ORDER = 3000;   // productos distintos por pedido
+
 function ingestVendorOrder(src, opts = {}) {
   const askConfirm = opts.askConfirm !== false;
   const extraWarnings = Array.isArray(opts.extraWarnings) ? opts.extraWarnings : [];
@@ -10315,11 +11070,19 @@ function ingestVendorOrder(src, opts = {}) {
   // del origen) para que Excel y nube se comporten idéntico.
   const items = [];
   const warnings = [];
+  let truncatedItems = false;
   src.items.forEach(raw => {
     const product = String(raw.label || '').trim();
     if (!product) return;
-    const qty = Math.round(parseFloat(raw.qty) || 0);
+    // Tope de ítems distintos: descartar el resto (defensa en profundidad).
+    if (items.length >= MAX_ITEMS_PER_ORDER) { truncatedItems = true; return; }
+    let qty = Math.round(parseFloat(raw.qty) || 0);
     if (qty <= 0) return;
+    // Clampear cantidades fuera de rango (Excel roto / payload manipulado).
+    if (qty > MAX_QTY_PER_LINE) {
+      warnings.push(`"${product}" — cantidad ${qty} fuera de rango, recortada a ${MAX_QTY_PER_LINE}`);
+      qty = MAX_QTY_PER_LINE;
+    }
 
     const key = raw.key || normalize(product);
     const price = parseFloat(raw.price) || 0;
@@ -10350,6 +11113,9 @@ function ingestVendorOrder(src, opts = {}) {
   if (!items.length) {
     if (!opts.silent) toast('El pedido no contiene items válidos.', 'err');
     return { status: 'empty' };
+  }
+  if (truncatedItems) {
+    warnings.push(`El pedido traía más de ${MAX_ITEMS_PER_ORDER} productos: se procesaron los primeros ${MAX_ITEMS_PER_ORDER}`);
   }
 
   // Total a partir de los subtotales (más confiable que el total declarado)
@@ -10680,6 +11446,7 @@ function _doConfirmReceivedOrder(localId) {
   // confirmados a partir de esta versión generan deuda del cliente —
   // los confirmados antes se consideran ya cobrados.
   order.ctaCte      = true;
+  addBreadcrumb('order.confirm', { id: localId, client: order.cliente || order.client || '', items: order.items.length });
 
   saveReceivedOrders();
   saveMerged();
@@ -10720,16 +11487,16 @@ function _doConfirmReceivedOrder(localId) {
 // ── Revertir confirmación: restaura el stock al estado previo ──
 // Solo posible si confirmamos con snapshot guardado. Si la versión vieja
 // no tenía snapshot, no se puede revertir (es lo esperado).
-function revertReceivedOrder(localId) {
+async function revertReceivedOrder(localId) {
   if (!_markProcessing(localId)) return;
   try {
-    _doRevertReceivedOrder(localId);
+    await _doRevertReceivedOrder(localId);
   } finally {
     _unmarkProcessing(localId);
   }
 }
 
-function _doRevertReceivedOrder(localId) {
+async function _doRevertReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   if (order.status !== 'confirmado') {
@@ -10772,7 +11539,7 @@ function _doRevertReceivedOrder(localId) {
   }
   msg += `\n\n¿Continuar?`;
 
-  if (!confirm(msg)) return;
+  if (!await appConfirm({ message: msg, okText: 'Revertir' })) return;
 
   // Restaurar el stock por DELTA: sumamos de vuelta exactamente lo que este
   // pedido descontó (qtyBefore - qtyAfter), en lugar de fijar el valor
@@ -10813,14 +11580,14 @@ function _doRevertReceivedOrder(localId) {
 }
 
 // ── Descartar pedido (sin descontar stock) ──
-function discardReceivedOrder(localId) {
+async function discardReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   if (order.status === 'confirmado') {
     toast('Este pedido ya está confirmado, no se puede descartar.', 'err');
     return;
   }
-  if (!confirm(`¿Descartar el pedido de ${order.vendor} (${order.client})?\nNo se descuenta nada del stock.`)) return;
+  if (!await appConfirm({ message: `¿Descartar el pedido de ${order.vendor} (${order.client})?\nNo se descuenta nada del stock.`, okText: 'Descartar', danger: true })) return;
   order.status = 'descartado';
   saveReceivedOrders();
   renderOrdersTab();
@@ -10828,14 +11595,14 @@ function discardReceivedOrder(localId) {
 }
 
 // ── Eliminar pedido del historial (definitivo) ──
-function deleteReceivedOrder(localId) {
+async function deleteReceivedOrder(localId) {
   const order = state.receivedOrders.find(o => o.localId === localId);
   if (!order) return;
   let msg = `¿Eliminar definitivamente este pedido?`;
   if (order.status === 'confirmado') {
     msg += `\n\n⚠️ Este pedido ya está confirmado. Eliminarlo NO REVIERTE el descuento de stock — solo borra el registro.`;
   }
-  if (!confirm(msg)) return;
+  if (!await appConfirm({ message: msg, okText: 'Eliminar', danger: true })) return;
   state.receivedOrders = state.receivedOrders.filter(o => o.localId !== localId);
   saveReceivedOrders();
   renderOrdersTab();
@@ -10843,13 +11610,13 @@ function deleteReceivedOrder(localId) {
 }
 
 // ── Limpiar todos los pedidos descartados ──
-function purgeDiscardedOrders() {
+async function purgeDiscardedOrders() {
   const n = state.receivedOrders.filter(o => o.status === 'descartado').length;
   if (n === 0) {
     toast('No hay pedidos descartados.', 'err');
     return;
   }
-  if (!confirm(`¿Eliminar ${n} pedido(s) descartado(s) del historial?`)) return;
+  if (!await appConfirm({ message: `¿Eliminar ${n} pedido(s) descartado(s) del historial?`, okText: 'Eliminar', danger: true })) return;
   state.receivedOrders = state.receivedOrders.filter(o => o.status !== 'descartado');
   saveReceivedOrders();
   renderOrdersTab();
@@ -11280,7 +12047,7 @@ async function pullVendorClients() {
     const cfg = scGetConfig();
     const { data, error } = await client
       .from('clients')
-      .select('client_id, name, list, vendor, updated_at')
+      .select('client_id, name, list, vendor, domicilio, telefono, updated_at')
       .eq('ns', cfg.ns)
       .limit(1000);
     if (error) throw error;
@@ -11298,6 +12065,8 @@ async function pullVendorClients() {
           id: _newClientId(),
           name,
           list,
+          domicilio: row.domicilio || '',
+          telefono: row.telefono || '',
           notes: '',
           source: 'vendor',
           vendor: row.vendor || '',
@@ -11305,12 +12074,28 @@ async function pullVendorClients() {
           updatedAt: row.updated_at || now,
         });
         created++;
-      } else if (existing.source !== 'central'
-                 && existing.list !== list
-                 && String(row.updated_at || '') > String(existing.updatedAt || '')) {
-        existing.list = list;
-        existing.updatedAt = row.updated_at;
-        updated++;
+      } else {
+        // La central manda en su libreta, pero completamos datos que falten
+        // localmente (no se pisa lo ya cargado a mano por la central).
+        let changed = false;
+        if (existing.source !== 'central'
+            && existing.list !== list
+            && String(row.updated_at || '') > String(existing.updatedAt || '')) {
+          existing.list = list;
+          changed = true;
+        }
+        if (!String(existing.domicilio || '').trim() && String(row.domicilio || '').trim()) {
+          existing.domicilio = row.domicilio;
+          changed = true;
+        }
+        if (!String(existing.telefono || '').trim() && String(row.telefono || '').trim()) {
+          existing.telefono = row.telefono;
+          changed = true;
+        }
+        if (changed) {
+          existing.updatedAt = row.updated_at || existing.updatedAt;
+          updated++;
+        }
       }
     });
 
@@ -11379,9 +12164,16 @@ function renderClientsList() {
     const notes = String(c.notes || '').trim();
     if (notes) sub.push(`📌 ${escHtml(notes)}`);
     if (c.source === 'vendor' && c.vendor) sub.push(`👤 lo cargó ${escHtml(c.vendor)}`);
+    // Aviso de datos de contacto faltantes (domicilio / teléfono)
+    const faltan = [];
+    if (!String(c.domicilio || '').trim()) faltan.push('domicilio');
+    if (!String(c.telefono || '').trim()) faltan.push('teléfono');
+    const warn = faltan.length
+      ? ` <span title="Faltan datos del cliente: ${faltan.join(', ')}" style="cursor:help">⚠️</span>`
+      : '';
     return `<div class="client-row" onclick="openClientForm('${escJsAttr(c.id)}')">
       <div class="client-row-main">
-        <div class="client-row-name">${escHtml(c.name)}</div>
+        <div class="client-row-name">${escHtml(c.name)}${warn}</div>
         ${sub.length ? `<div class="client-row-notes">${sub.join(' · ')}</div>` : ''}
       </div>
       <span class="client-list-tag">${_cliListName(c.list)}</span>
@@ -11418,6 +12210,8 @@ function openClientForm(id) {
   document.getElementById('clientFormTitle').textContent = c ? 'Editar cliente' : 'Nuevo cliente';
   document.getElementById('clientFormName').value = c ? c.name : '';
   document.getElementById('clientFormList').value = c ? c.list : 'act';
+  document.getElementById('clientFormDomicilio').value = c ? (c.domicilio || '') : '';
+  document.getElementById('clientFormTelefono').value = c ? (c.telefono || '') : '';
   document.getElementById('clientFormNotes').value = c ? (c.notes || '') : '';
   document.getElementById('clientFormSaldoIni').value = c && c.saldoInicial ? c.saldoInicial : '';
   document.getElementById('clientFormDeleteBtn').style.display = c ? 'inline-block' : 'none';
@@ -11432,6 +12226,8 @@ function closeClientForm() {
 function saveClientForm() {
   const name  = (document.getElementById('clientFormName').value || '').trim();
   const lista = document.getElementById('clientFormList').value || 'act';
+  const domicilio = (document.getElementById('clientFormDomicilio').value || '').trim();
+  const telefono  = (document.getElementById('clientFormTelefono').value || '').trim();
   const notes = (document.getElementById('clientFormNotes').value || '').trim();
   if (!name) { toast('Falta el nombre del cliente', 'err'); return; }
 
@@ -11451,6 +12247,8 @@ function saveClientForm() {
   }
   c.name = name;
   c.list = lista;
+  c.domicilio = domicilio;
+  c.telefono = telefono;
   c.notes = notes;
   c.saldoInicial = parseFloat(document.getElementById('clientFormSaldoIni').value) || 0;
   c.source = 'central';   // editada a mano: los vendedores ya no la pisan
@@ -11462,10 +12260,10 @@ function saveClientForm() {
   toast(isNew ? `Cliente ${name} creado ✓` : 'Ficha actualizada ✓', 'ok');
 }
 
-function deleteClientForm() {
+async function deleteClientForm() {
   const c = _editingClientId ? state.clients.find(x => x.id === _editingClientId) : null;
   if (!c) { closeClientForm(); return; }
-  if (!confirm(`¿Borrar la ficha de "${c.name}"?\n\nLos pedidos no se tocan; solo se pierden la lista asignada y las notas.`)) return;
+  if (!await appConfirm({ message: `¿Borrar la ficha de "${c.name}"?\n\nLos pedidos no se tocan; solo se pierden la lista asignada y las notas.`, okText: 'Borrar', danger: true })) return;
   state.clients = state.clients.filter(x => x.id !== c.id);
   saveClients();
   closeClientForm();
@@ -11572,12 +12370,20 @@ function openDocModal(localId) {
   // Setear valores por defecto
   document.getElementById('docTipo').value     = cfg.ultimoTipoDoc || 'PRESUPUESTO';
   document.getElementById('docNumero').value   = cfg.proxNumero;
-  document.getElementById('docTC').value       = cfg.ultimoTC;
+  // El tipo de cambio sale de la cotización del día de Caja (state.treasury.rate),
+  // así el PDF y la pestaña Caja usan siempre el mismo dólar. Si todavía no se
+  // cargó ninguna cotización, cae al último TC usado en un documento.
+  const docTCEl = document.getElementById('docTC');
+  docTCEl.value = (state.treasury.rate > 0 ? state.treasury.rate : cfg.ultimoTC);
+  docTCEl.dataset.touched = ''; // marca de "editado a mano" reseteada en cada apertura
   document.getElementById('docCliente').value  = order.client || '';
   // Resumen
   const sum = `${order.items.length} items · USD ${_fmtN(order.total)}`;
   document.getElementById('docOrderSum').textContent = sum;
   overlay.style.display = 'flex';
+  // Si todavía no hay cotización de hoy, traer el blue (actualiza el campo si no
+  // se tocó). Best-effort, no bloquea la apertura del modal.
+  if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue();
 }
 
 function closeDocModal() {
@@ -11651,6 +12457,18 @@ function confirmDocModal() {
     state.docConfig.ultimoTC      = tc;
     state.docConfig.ultimoTipoDoc = tipo;
     saveDocConfig();
+
+    // Sincronizar con la cotización del día de Caja: si en el PDF se usó un
+    // tipo de cambio distinto, queda también como cotización del día (y viceversa,
+    // openDocModal ya precarga desde ahí). Así ambas partes muestran el mismo dólar.
+    if (state.treasury.rate !== tc) {
+      state.treasury.rate = tc;
+      state.treasury.rateUpdatedAt = new Date().toISOString();
+      saveTreasury();
+      if (typeof renderCajaTab === 'function' && document.getElementById('cajaRateInput')) {
+        try { renderCajaTab(); } catch (_) {}
+      }
+    }
 
     // Anotar el doc generado en el pedido
     order.docs = order.docs || [];
@@ -11798,6 +12616,7 @@ function generatePDF(order, params) {
     // Replica los campos del modelo (la mayoría quedan vacíos por ahora)
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
+    const _cliFicha = (typeof findClientFicha === 'function') ? findClientFicha(order.client) : null;
     doc.text('SEÑOR/ES:', MARG_X, y);
     doc.setFont('helvetica', 'normal');
     doc.text(String(order.client || ''), MARG_X + 18, y);
@@ -11811,6 +12630,8 @@ function generatePDF(order, params) {
 
     doc.setFont('helvetica', 'bold');
     doc.text('DOMICILIO:', MARG_X, y);
+    doc.setFont('helvetica', 'normal');
+    if (_cliFicha && _cliFicha.domicilio) doc.text(String(_cliFicha.domicilio), MARG_X + 22, y);
     doc.setFont('helvetica', 'bold');
     doc.text('NOMBRE CONTACTO CLIENTE:', MARG_X + 105, y);
     y += 4.5;
@@ -11825,6 +12646,8 @@ function generatePDF(order, params) {
     doc.text('CORREO ELECTRONICO:', MARG_X, y);
     doc.setFont('helvetica', 'bold');
     doc.text('TELEFONOS:', MARG_X + 105, y);
+    doc.setFont('helvetica', 'normal');
+    if (_cliFicha && _cliFicha.telefono) doc.text(String(_cliFicha.telefono), MARG_X + 127, y);
     y += 4.5;
 
     doc.setFont('helvetica', 'bold');
@@ -13374,6 +14197,79 @@ function setCajaRate(v) {
   renderCajaTab();
 }
 
+// ── Dólar blue automático ──
+// Trae el dólar blue (valor "venta") de una fuente pública gratuita con CORS.
+// InfoDólar no se puede leer directo desde el navegador (lo bloquea CORS), pero
+// dolarapi.com publica el MISMO blue en JSON. Best-effort: si falla, avisa y no rompe.
+async function fetchDolarBlue() {
+  const res = await fetch('https://dolarapi.com/v1/dolares/blue', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  const venta = parseFloat(data && data.venta);
+  if (!venta || venta <= 0) throw new Error('respuesta sin venta');
+  return venta;
+}
+
+// Botón 🔄 (en Caja y en el modal del PDF): trae el blue "venta" y lo carga como
+// cotización. En Caja lo fija como cotización del día; en el PDF solo llena el
+// campo (al generar el PDF se sincroniza con Caja, ver confirmDocModal).
+async function fetchDolarBlueInto(target) {
+  const btns = document.querySelectorAll('.caja-rate-fetch');
+  btns.forEach(b => b.classList.add('loading'));
+  toast('Buscando dólar blue…', 'ok');
+  let venta;
+  try {
+    venta = await fetchDolarBlue();
+  } catch (e) {
+    if (typeof addBreadcrumb === 'function') addBreadcrumb('fetchDolarBlue:error', { msg: String(e && e.message || e) });
+    toast('No se pudo traer el dólar blue. Probá de nuevo o cargalo a mano.', 'err');
+    return;
+  } finally {
+    btns.forEach(b => b.classList.remove('loading'));
+  }
+  if (target === 'doc') {
+    const el = document.getElementById('docTC');
+    if (el) { el.value = venta; el.dataset.touched = ''; }
+    toast(`Dólar blue (venta): 1 USD = $ ${_fmtN(venta)} ✓`, 'ok');
+  } else {
+    setCajaRate(venta);
+  }
+}
+
+// Trae el blue automáticamente y lo fija como cotización del día, SOLO si todavía
+// no hay una cotización cargada HOY (así nunca pisa un valor que el usuario ya
+// cargó o verificó a mano hoy; sigue siendo editable). Silencioso y best-effort:
+// si falla (sin internet, etc.) no molesta. Se llama al abrir la app y al entrar
+// a Caja / al modal del PDF.
+function autoFetchDolarBlue() {
+  if (!state.treasury) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const updated = state.treasury.rateUpdatedAt ? String(state.treasury.rateUpdatedAt).slice(0, 10) : '';
+  if (updated === today && state.treasury.rate > 0) return; // ya hay cotización de hoy
+  fetchDolarBlue().then(venta => {
+    // Re-chequear: si mientras tanto el usuario cargó/verificó una cotización hoy,
+    // respetarla y no pisarla.
+    const upd2 = state.treasury.rateUpdatedAt ? String(state.treasury.rateUpdatedAt).slice(0, 10) : '';
+    if (upd2 === today && state.treasury.rate > 0) return;
+    state.treasury.rate = venta;
+    state.treasury.rateUpdatedAt = new Date().toISOString();
+    saveTreasury();
+    // Refrescar lo que esté a la vista.
+    const ri = document.getElementById('cajaRateInput');
+    if (ri) ri.value = venta;
+    const pageCaja = document.getElementById('pageCaja');
+    if (pageCaja && pageCaja.classList.contains('active')) {
+      try { renderCajaTab(); } catch (_) {}
+    }
+    // Si el modal del PDF está abierto y el usuario no tocó el campo, actualizarlo.
+    const overlay = document.getElementById('overlayDoc');
+    const dtc = document.getElementById('docTC');
+    if (overlay && overlay.style.display === 'flex' && dtc && !dtc.dataset.touched) {
+      dtc.value = venta;
+    }
+  }).catch(() => {});
+}
+
 // ── Sub-pestañas ──
 function setCajaSubtab(t) {
   _cajaView.tab = t;
@@ -13424,13 +14320,13 @@ function addCajaMovement(mov) {
   saveTreasury();
 }
 
-function deleteCajaMovement(id) {
+async function deleteCajaMovement(id) {
   const i = (state.treasury.movements || []).findIndex(m => m.id === id);
   if (i < 0) return;
   const m = state.treasury.movements[i];
   const cat = _cajaCat(m.category);
   const acc = _cajaAcc(m.account);
-  if (!confirm(`¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`)) return;
+  if (!await appConfirm({ message: `¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`, okText: 'Borrar', danger: true })) return;
   state.treasury.movements.splice(i, 1);
   saveTreasury();
   renderCajaTab();
@@ -13455,15 +14351,191 @@ function openMovForm(cat, client) {
   document.getElementById('movMonto').value = '';
   document.getElementById('movRate').value = state.treasury.rate || state.docConfig?.ultimoTC || '';
   document.getElementById('movConcepto').value = '';
-  document.getElementById('movClientsDL').innerHTML =
-    _movClientNames().map(n => `<option value="${escHtml(n)}"></option>`).join('');
+  movClientHide();
   movFormSync();
+  refreshSelect(document.getElementById('movCat'));
+  refreshSelect(document.getElementById('movAccount'));
   document.getElementById('overlayMov').style.display = 'flex';
 }
 
 function closeMovForm() {
   document.getElementById('overlayMov').style.display = 'none';
 }
+
+// Selector de cliente in-app (reemplaza el datalist nativo, que mostraba los
+// nombres en la tira del teclado de Android): desplegable propio, filtrable,
+// con el estilo de la app. Se llena con _movClientNames().
+function movClientFilter(q) {
+  const box = document.getElementById('movClientResults');
+  if (!box) return;
+  const term = (q || '').trim().toLowerCase();
+  const names = _movClientNames();
+  const matches = term ? names.filter(n => n.toLowerCase().includes(term)) : names;
+  if (!matches.length) { movClientHide(); return; }
+  box.innerHTML = matches.slice(0, 50)
+    .map(n => `<div class="mcr-item" onmousedown="movClientPick('${escJsAttr(n)}')">${escHtml(n)}</div>`)
+    .join('');
+  box.classList.add('show');
+}
+function movClientPick(name) {
+  document.getElementById('movClient').value = name;
+  movClientHide();
+}
+function movClientHide() {
+  const box = document.getElementById('movClientResults');
+  if (box) { box.innerHTML = ''; box.classList.remove('show'); }
+}
+// Pequeño retardo: deja que el onmousedown del ítem dispare antes de ocultar.
+function movClientBlurLater() { setTimeout(movClientHide, 200); }
+
+// ── Diálogo de texto propio (reemplaza el prompt() del navegador) ──
+// Devuelve una promesa con el texto, o null si se cancela. Uso:
+//   const x = await appPrompt({ title:'...', placeholder:'...', value:'' });
+let _appPromptResolve = null;
+function appPrompt(opts) {
+  opts = opts || {};
+  return new Promise(resolve => {
+    _appPromptResolve = resolve;
+    document.getElementById('appPromptTitle').textContent = opts.title || '';
+    const inp = document.getElementById('appPromptInput');
+    inp.value = opts.value || '';
+    inp.placeholder = opts.placeholder || '';
+    inp.type = opts.password ? 'password' : 'text';
+    document.getElementById('appPromptOverlay').style.display = 'flex';
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+  });
+}
+function _appPromptClose(val) {
+  document.getElementById('appPromptOverlay').style.display = 'none';
+  const r = _appPromptResolve; _appPromptResolve = null;
+  if (r) r(val == null ? null : val);
+}
+
+// ── Diálogo de confirmar propio (reemplaza el confirm() del navegador) ──
+// Devuelve una promesa que resuelve true (Aceptar) o false (Cancelar). Uso:
+//   if (!await appConfirm('¿Borrar?')) return;
+//   if (!await appConfirm({ message:'...', okText:'Borrar', danger:true })) return;
+let _appConfirmResolve = null;
+function appConfirm(opts) {
+  if (typeof opts === 'string') opts = { message: opts };
+  opts = opts || {};
+  return new Promise(resolve => {
+    _appConfirmResolve = resolve;
+    document.getElementById('appConfirmMsg').textContent = opts.message || '';
+    const ok = document.getElementById('appConfirmOk');
+    const cancel = document.getElementById('appConfirmCancel');
+    ok.textContent = opts.okText || 'Aceptar';
+    cancel.textContent = opts.cancelText || 'Cancelar';
+    ok.classList.toggle('app-modal-danger', !!opts.danger);
+    document.getElementById('appConfirmOverlay').style.display = 'flex';
+    setTimeout(() => { try { cancel.focus(); } catch (e) {} }, 50);
+  });
+}
+function _appConfirmClose(val) {
+  document.getElementById('appConfirmOverlay').style.display = 'none';
+  const r = _appConfirmResolve; _appConfirmResolve = null;
+  if (r) r(!!val);
+}
+
+// ── Desplegable propio para <select> (la lista del sistema no se puede pintar).
+// Oculta el <select> nativo pero lo mantiene funcional: al elegir una opción
+// fija su value y dispara su onchange, así la lógica existente no cambia. La
+// lista flota a nivel de página (position:fixed, colgada del <body>) para no
+// quedar recortada dentro de modales o áreas con scroll. ──
+function enhanceSelect(sel) {
+  if (!sel || sel._enhanced) return;
+  sel._enhanced = true;
+  const wrap = document.createElement('div');
+  wrap.className = 'csel';
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+  sel.classList.add('csel-native');
+  sel.tabIndex = -1;
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'csel-trigger';
+  wrap.appendChild(trigger);
+
+  const pop = document.createElement('div');   // se cuelga del <body> al abrir
+  pop.className = 'csel-pop';
+
+  function syncTrigger() {
+    const o = sel.options[sel.selectedIndex];
+    trigger.textContent = o ? o.text : '';
+  }
+  function position() {
+    const r = trigger.getBoundingClientRect();
+    pop.style.left = r.left + 'px';
+    pop.style.top = (r.bottom + 4) + 'px';
+    pop.style.minWidth = r.width + 'px';
+  }
+  function buildPop() {
+    pop.innerHTML = '';
+    Array.from(sel.options).forEach((opt, i) => {
+      const it = document.createElement('div');
+      it.className = 'csel-opt' + (i === sel.selectedIndex ? ' on' : '');
+      it.textContent = opt.text;
+      it.addEventListener('click', () => {
+        sel.selectedIndex = i;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        syncTrigger();
+        close();
+      });
+      pop.appendChild(it);
+    });
+  }
+  function open() {
+    buildPop();
+    document.body.appendChild(pop);
+    position();
+    pop.classList.add('show');
+    pop._open = true;
+  }
+  function close() {
+    pop.classList.remove('show');
+    pop._open = false;
+    if (pop.parentNode) pop.parentNode.removeChild(pop);
+  }
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pop._open ? close() : open();
+  });
+  document.addEventListener('click', (e) => {
+    if (pop._open && e.target !== trigger && !pop.contains(e.target)) close();
+  });
+  window.addEventListener('scroll', () => { if (pop._open) close(); }, true);
+  window.addEventListener('resize', () => { if (pop._open) close(); });
+  sel.addEventListener('change', syncTrigger);
+  sel._cselSync = syncTrigger;
+  syncTrigger();
+}
+function refreshSelect(sel) { if (sel && sel._cselSync) sel._cselSync(); }
+function enhanceAllSelects(root) {
+  (root || document).querySelectorAll('select').forEach(enhanceSelect);
+}
+// Convierte automáticamente los <select> que se agregan al DOM más tarde
+// (ej. los de cuenta/mes en los reportes de Caja, que se regeneran al render).
+function _watchSelects() {
+  try {
+    new MutationObserver(muts => {
+      const toRefresh = new Set();
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType !== 1) continue;
+          if (n.tagName === 'SELECT') enhanceSelect(n);
+          else if (n.querySelectorAll) n.querySelectorAll('select').forEach(enhanceSelect);
+        }
+        // Opciones repobladas por código → re-sincronizar el texto del trigger.
+        if (m.target && m.target.tagName === 'SELECT' && m.target._enhanced) toRefresh.add(m.target);
+      }
+      toRefresh.forEach(refreshSelect);
+    }).observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
+}
+function _initCustomSelects() { enhanceAllSelects(); _watchSelects(); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initCustomSelects);
+else _initCustomSelects();
 
 // Sincroniza visibilidad y ayudas del formulario según tipo/cuenta/monto.
 function movFormSync() {
@@ -13817,7 +14889,7 @@ function _renderCajaMain() {
   if (!movs.length) {
     html += `<div class="caja-empty">Sin movimientos en este período.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Concepto</th><th class="num">Pesos (ARS)</th><th class="num">Dólares (USD)</th><th class="num">≈ Total USD</th>
     </tr></thead><tbody>`;
     Object.entries(CAJA_CATS).forEach(([id, cat]) => {
@@ -13833,7 +14905,7 @@ function _renderCajaMain() {
     const netEq = inEq - outEq;
     html += `<tr class="caja-total"><td>Resultado del período</td><td class="num"></td><td class="num"></td>
       <td class="num ${netEq >= 0 ? 'caja-pos' : 'caja-neg'}">${netEq < 0 ? '−' : ''}USD ${_fmtN(Math.abs(netEq))}</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
 
@@ -13844,7 +14916,7 @@ function _renderCajaMain() {
   } else {
     const sorted = [...movs].sort((a, b) =>
       String(b.date).localeCompare(String(a.date)) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Fecha</th><th>Tipo</th><th>Cuenta</th><th>Detalle</th><th class="num">Monto</th><th class="num">≈ USD</th><th></th>
     </tr></thead><tbody>`;
     sorted.forEach(m => {
@@ -13862,7 +14934,7 @@ function _renderCajaMain() {
         <td class="num"><button class="caja-mini-btn danger" onclick="deleteCajaMovement('${escJsAttr(m.id)}')">🗑</button></td>
       </tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
   return html;
@@ -13881,7 +14953,7 @@ function _renderCajaCalle() {
     return html;
   }
   let total = 0;
-  html += `<table class="caja-table"><thead><tr>
+  html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
     <th>Cliente</th><th>Vendedor</th><th>Lista</th>
     <th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Deuda USD</th><th></th>
   </tr></thead><tbody>`;
@@ -13908,7 +14980,7 @@ function _renderCajaCalle() {
     html += `<tr><td colspan="5" class="caja-muted">Equivalente en pesos (1 USD = $ ${_fmtN(state.treasury.rate)})</td>
       <td class="num caja-muted">$ ${_fmtN(total * state.treasury.rate)}</td><td></td></tr>`;
   }
-  html += `</tbody></table>`;
+  html += `</tbody></table></div>`;
   html += `<div class="caja-empty" style="margin-top:.5rem">Los pedidos confirmados ANTES de esta versión se consideran ya cobrados y no suman deuda.
     Para deudas previas usá el campo "Deuda inicial" de la ficha del cliente.</div>`;
   html += `</div>`;
@@ -13941,7 +15013,7 @@ function _renderCajaReportes() {
   if (!monthOrders.length) {
     html += `<div class="caja-empty">Sin pedidos confirmados en este mes.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Lista</th><th class="num">Pedidos</th><th class="num">USD</th><th class="num">% del mes</th>
     </tr></thead><tbody>`;
     [['act', '📋 Lista 7'], ['dist', '🚛 Distribuidor'], ['vip', '⭐ VIP']].forEach(([id, lbl]) => {
@@ -13952,7 +15024,7 @@ function _renderCajaReportes() {
     });
     html += `<tr class="caja-total"><td>Total</td><td class="num">${monthOrders.length}</td>
       <td class="num">USD ${_fmtN(mesTotal)}</td><td class="num">100%</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
   }
   html += `</div>`;
 
@@ -13970,7 +15042,7 @@ function _renderCajaReportes() {
     html += `<div class="caja-empty">Sin ventas este mes.</div>`;
   } else {
     let totCom = 0;
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Vendedor</th><th class="num">Pedidos</th><th class="num">Ventas USD</th><th class="num">% comisión</th><th class="num">Comisión USD</th>
     </tr></thead><tbody>`;
     [...byVendor.values()].sort((a, b) => b.usd - a.usd).forEach(v => {
@@ -13985,7 +15057,7 @@ function _renderCajaReportes() {
     });
     html += `<tr class="caja-total"><td colspan="4">Total comisiones</td>
       <td class="num caja-pos">USD ${_fmtN(totCom)}</td></tr>`;
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     html += `<div class="caja-empty" style="margin-top:.4rem">El % se guarda por vendedor y se aplica sobre las ventas confirmadas de su cartera del mes.</div>`;
   }
   html += `</div>`;
@@ -13996,7 +15068,7 @@ function _renderCajaReportes() {
   if (!balance.length) {
     html += `<div class="caja-empty">Sin datos todavía.</div>`;
   } else {
-    html += `<table class="caja-table"><thead><tr>
+    html += `<div class="caja-tscroll"><table class="caja-table"><thead><tr>
       <th>Mes</th><th class="num">Ventas</th><th class="num">Cobrado</th><th class="num">Gastos</th><th class="num">Impuestos</th><th class="num">Ganancia neta</th>
     </tr></thead><tbody>`;
     balance.slice(0, 13).forEach(b => {
@@ -14008,7 +15080,7 @@ function _renderCajaReportes() {
         <td class="num">${b.impuestos ? '−' + _fmtN(b.impuestos) : '—'}</td>
         <td class="num ${neto >= 0 ? 'caja-pos' : 'caja-neg'}"><b>${_fmtN(neto)}</b></td></tr>`;
     });
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     html += `<div class="caja-empty" style="margin-top:.4rem">Ventas = pedidos confirmados del mes. Gastos e impuestos = salidas de caja convertidas a USD con la cotización de cada movimiento.</div>`;
   }
   html += `</div>`;
@@ -14059,6 +15131,10 @@ function _renderCajaReportes() {
     // Restaurar y renderizar el stock (lo que antes hacía la IIFE de ui.js).
     try { if (typeof restoreStockOnInit === 'function') restoreStockOnInit(); }
     catch (e) { console.warn('boot restore:', e && e.message); }
+
+    // Traer el dólar blue del día automáticamente (best-effort, no bloquea el arranque).
+    try { if (typeof autoFetchDolarBlue === 'function') autoFetchDolarBlue(); }
+    catch (e) { console.warn('boot blue:', e && e.message); }
   }
 
   function _go() {

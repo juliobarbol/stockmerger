@@ -80,6 +80,7 @@ Cada módulo arranca con un banner `// XXX.JS — ...`. Saltá directo al rango:
 | `BACKUP.JS` | 8579–9179 | Exportar/importar TODA la config como JSON (incluye `clients` y `treasury`). Incluye `buildVendorPayload()`. |
 | `BACKUPS.JS` | 9180–9394 | Capa 1 (recordatorio + descarga) y Capa 2 (snapshots en nube, tabla `backups`). |
 | `SUPABASE.JS` | 9395–9889 | Sync **opcional** con la nube. Config, publicar catálogo, traer pedidos (+ fichas de clientes). |
+| `LOG.JS` | 10412–10631 | **Bitácora de diagnóstico**: `logEvent()` (best-effort, cola offline) sube a la tabla `event_log`; captura `window.onerror`/`unhandledrejection`, muestra un código `ref` al usuario y adjunta breadcrumbs (`addBreadcrumb`) + contexto. |
 | `REALTIME.JS` | 9890–10003 | Supabase Realtime: escucha `orders` nuevos y cambios en `clients`. |
 | `ORDERS.JS` | 10004–10671 | Pedidos recibidos de vendedores (`state.receivedOrders`). Al confirmar marca `order.ctaCte` (entra a la cuenta corriente de Caja). |
 | `ORDERS_UI.JS` | 10672–11033 | UI de la pestaña Pedidos (las tarjetas muestran notas/lista de la ficha del cliente). |
@@ -119,6 +120,67 @@ Config en `localStorage['sb_config'] = { url, anonKey, ns }`:
 
 Cliente creado con `supabase.createClient(url, anonKey)` (ver `scClient()`).
 
+La sección de conexión de la UI (pestaña Archivos) queda **oculta tras la
+contraseña `opbayressincnube`** una vez configurada (candado anti-miradas,
+mismo espíritu que el gran reset — no es seguridad real). El campo de la key
+es `type="password"` y el resumen solo muestra las últimas 4. Igual en el
+vendedor (Home). Ver `sbLockRefresh()` en SUPABASE.JS de ambos repos.
+
+### Acceso por persona (Supabase Auth + RLS) — HECHO (2026-06-13)
+
+La anon key **ya NO abre la base por sí sola**: hay RLS real por rol. Cada
+persona tiene un usuario de Supabase Auth (email + contraseña) y un rol por
+tienda (`central` / `vendor`) en la tabla `user_stores`. Las policies
+consultan ese rol con el helper `store_role(ns)`; sin sesión iniciada
+(`auth.uid()` null) no se ve ni se toca nada.
+
+- **Gate de login al abrir** (`#authGate`, `authGateRefresh()`): si la nube
+  está configurada y NO hay sesión guardada, una pantalla tapa la app hasta
+  iniciar sesión (`authGateLogin()`). No bloquea el modo file-only (sin nube
+  configurada no aparece). Botón "Configurar conexión" (`authGateConfig()`,
+  tras la contraseña del candado) para cargar URL/key la primera vez.
+- **Captcha en el login (Cloudflare Turnstile) — HECHO (2026-06-19)**: ambas
+  pantallas de login (gate `#gateCaptcha` y sección de conexión
+  `#sbLoginCaptcha`) muestran un widget Turnstile; el token viaja en
+  `signInWithPassword({ options:{ captchaToken } })` y Supabase lo valida con la
+  **clave secreta** (en `config/auth`, `security_captcha_provider:'turnstile'`,
+  **NUNCA en el código** — el repo es público). La **Site Key** sí va en el HTML
+  (`TURNSTILE_SITEKEY`, es pública por diseño). Helpers en SUPABASE.JS:
+  `_loadTurnstile` / `_ensureCaptcha` / `_captchaToken` / `_captchaReset`.
+  Degrada con gracia: si el script no carga, el login sigue sin token. Solo
+  protege el **inicio de sesión** (no el refresh ni las sesiones ya abiertas) y
+  no aparece en modo file-only. **Kill-switch**: `security_captcha_enabled` en
+  Supabase (Management API) lo apaga al instante sin redeploy. El alta de
+  personas no cambia. El widget Turnstile vive en la cuenta Cloudflare de Julio
+  (hostnames `stockmerger.*` y `stockvendedor.*.workers.dev`).
+- **Persistencia**: `scClient()` crea el cliente con `persistSession: true` +
+  `autoRefreshToken: true` + `storageKey: SB_AUTH_KEY`. La sesión queda en
+  `localStorage` (`sb-<ref>-auth-token`) y sobrevive recargas; offline el token
+  vencido se renueva solo al recuperar internet. El gate usa
+  `_sbHasStoredSession()` (presencia, sin exigir token vigente).
+- **Login también en la sección de conexión**: dentro del candado hay el mismo
+  formulario (`sbLogin()`); muestra el email y "Cerrar sesión" (`sbLogout()`,
+  re-muestra el gate). Estado refrescado por `sbLockRefresh()` con
+  `_sbGetSession()`.
+- **Roles**: `central` puede TODO lo de su `ns` (publicar catálogo, leer/borrar
+  pedidos, tablas de sync, backups). `vendor` solo LEE `catalog` e INSERTA en
+  `orders`/`clients`. Las tablas solo-central (`catalog_items`,
+  `rubro_multipliers`, `settings`, `received_orders`, `backups`) y el bucket
+  `backups` de Storage son inaccesibles para vendedores.
+- **Gran reset**: conserva la clave de sesión (`sb-<ref>-auth-token`) en
+  `GRAN_RESET_KEEP`, junto a `sb_config`/`docconfig`, para no desloguear.
+- **Alta/baja de personas**: crear/borrar el usuario en Supabase Auth (Admin
+  API / Management API con `SUPABASE_ACCESS_TOKEN`) y su fila en `user_stores`
+  (`role` = `central`/`vendor`). En el alta, además guardar la **identidad fija**
+  del vendedor en `app_metadata` (`vendor_name` + `vendor_code`): la app del
+  vendedor la autocompleta y bloquea (no se escribe el nombre/código a mano, así
+  no se duplican vendedores). El `ON DELETE CASCADE` borra la membresía al
+  borrar el usuario → el teléfono queda sin acceso al instante. Detalle y SQL
+  de ejemplo en `schema.sql` (sección AUTH + RLS).
+- **Usuarios actuales** (ns `default`, con código corto): Julio Barrientos
+  (JUL), Shirley Celis (SHI), Santiago Encalada (SAN) — central; Walter Méndez
+  (WAL), Sergio Achaval (SER), Jairo Leguizamón (JAI) — vendor.
+
 ### Tablas que toca StockMerger
 
 | Tabla | Uso desde el merger |
@@ -129,6 +191,7 @@ Cliente creado con `supabase.createClient(url, anonKey)` (ver `scClient()`).
 | `catalog_items`, `rubro_multipliers`, `settings` | Sync fila-por-fila entre dispositivos de la central (`SYNC_ROWS.JS`). |
 | `backups` | Snapshots de respaldo en nube (`BACKUPS.JS`). |
 | `clients` | **Lee** (pull + Realtime). Fichas de clientes que crean los vendedores; se integran a la libreta local (`CLIENTS.JS`, `pullVendorClients`). |
+| `event_log` | **Escribe** (insert, best-effort). Bitácora de diagnóstico: errores, contexto y breadcrumbs (`LOG.JS`). Append-only; la lee solo la central (en la práctica, se consulta por la Management API). |
 
 Realtime: se suscribe a `postgres_changes` en `orders` (pedidos nuevos) y, en
 modo multi-dispositivo, a `catalog_items` / `rubro_multipliers` / `settings` /
@@ -197,7 +260,16 @@ Dos canales equivalentes, según haya nube o no:
   el pedido, su lista se aplica y los chips quedan bloqueados. Para un pedido
   puntual con otra lista se EDITA LA FICHA (no se puede pisar desde el pedido).
 - **Notas privadas por lado**: las notas del vendedor no viajan a la central y
-  viceversa. Entre apps solo viajan nombre / lista / vendedor (tabla `clients`).
+  viceversa. Entre apps viajan nombre / lista / vendedor / domicilio / teléfono
+  (tabla `clients`); las notas NO.
+- **Datos de contacto del cliente (domicilio + teléfono)** — HECHO (2026-06-22):
+  campos OPCIONALES en la ficha de cliente de ambas apps (el vendedor crea con
+  solo el nombre; la lista la define el pedido). Viajan vendor→central por la
+  tabla `clients` (columnas `domicilio`/`telefono`). En la central, la ficha sin
+  esos datos muestra un ⚠️ en la lista de 👥 Clientes (`renderClientsList`), y
+  `pullVendorClients` COMPLETA los que falten localmente sin pisar lo cargado a
+  mano por la central. Además autocompletan DOMICILIO/TELEFONOS del PDF de
+  presupuesto (`DOCS.JS`, vía `findClientFicha`).
 - **Sync de fichas vendedor → central** (tabla `clients`): los borrados NO
   viajan (la libreta de la central es de la central), y si la central editó
   una ficha (`source: 'central'`), lo que mande un vendedor no la pisa.
@@ -214,8 +286,18 @@ Dos canales equivalentes, según haya nube o no:
   cuentas fijas — Caja Pesos (ARS), Caja Dólares (USD), Mercado Pago (ARS),
   Lemon (ARS). La **cotización del día** (1 USD = ARS) es un campo editable a
   mano; cada movimiento guarda la cotización con la que se registró, así los
-  reportes históricos no cambian al actualizarla. Nada de esto viaja a
-  StockVendedor ni a la nube (vive en `state.treasury`, local + backups).
+  reportes históricos no cambian al actualizarla. Esa misma cotización es el
+  **tipo de cambio que se precarga al generar el PDF de un pedido**, y se
+  **sincroniza en ambos sentidos** (editar el TC en el PDF actualiza la
+  cotización de Caja y viceversa; `openDocModal` lee `state.treasury.rate` y
+  `confirmDocModal` lo reescribe). El **dólar blue (valor *venta*) se trae
+  automáticamente** desde `dolarapi.com` (InfoDólar no se puede leer directo por
+  CORS) al abrir la app, al entrar a Caja y al abrir el modal del PDF
+  (`autoFetchDolarBlue`), pero **NUNCA pisa una cotización ya cargada hoy** (la
+  marca con `rateUpdatedAt`), así sigue siendo **editable a mano** si el operador
+  verifica otro precio. Además queda el botón **🔄** (`fetchDolarBlueInto`) para
+  forzar la actualización. Nada de esto viaja a StockVendedor ni a la nube (vive
+  en `state.treasury`, local + backups).
 - **Cuenta corriente de clientes (en USD)**: la deuda nace al CONFIRMAR un
   pedido (flag `ctaCte` que se setea desde v26 — los confirmados antes se
   asumen ya cobrados). Los pagos se registran como "cobranza" en Caja (en
@@ -229,6 +311,70 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
+- **EN CURSO (2026-06-21): rediseño de UI ("estilo DaisyUI" sin build) — rama
+  `claude/light-theme-ui-dtlqb5`, todo MERGEADO a `main`.** Trabajo con Julio,
+  por etapas y publicando cada una. Hecho hasta ahora:
+  - **Tema claro/oscuro**: variables en `html[data-theme="light"]` (CSS, justo
+    tras `:root`); script inline en el `<head>` (`applyTheme`/`toggleTheme`,
+    `localStorage['ui_theme']`, default `dark`); botón `#themeToggleBtn` en el
+    hero de Archivos. `meta[name=theme-color]` se actualiza solo.
+  - **Tarjetas limpias** (paneles de config como cards): `.backup-section`
+    (pestaña Archivos).
+  - **Tablas que no corren la página** (scroll horizontal contenido):
+    `.rubros-table-wrap` (Precios), wrapper `.caja-tscroll` alrededor de cada
+    `<table class="caja-table">` (Reportes de Caja — se envuelven en CAJA.JS),
+    `.od-table td` que envuelve texto largo (detalle de Pedidos). `tr:hover td`
+    ahora usa `var(--surface2)` (antes color fijo, se veía feo en claro).
+  - **Selector de cliente in-app** (Caja → Movimiento): reemplaza el `datalist`
+    nativo. `movClientFilter`/`movClientPick`/`movClientHide`/`movClientBlurLater`,
+    markup `#movClientResults`, CSS `.mov-client-results`/`.mcr-item`.
+  - **Diálogo de texto propio** (reemplaza `prompt()`/`alert()` del navegador):
+    `appPrompt({title,placeholder,value,password})` → Promise; `_appPromptClose`;
+    markup `#appPromptOverlay`; CSS `.app-modal*`. Aplicado en `openNewRubro`,
+    `createRubroFromAssign`, `granReset`, `sbUnlockConfig`, `authGateConfig`.
+  - **Desplegable propio para `<select>`** (la lista nativa no se puede pintar):
+    `enhanceSelect(sel)` oculta el `<select>` (`.csel-native`; sigue funcional:
+    al elegir setea `value` + dispara `change`), pone trigger `.csel-trigger` y
+    lista `.csel-pop` **flotante** (position:fixed, colgada del `<body>`, para
+    no recortarse en modales/scroll). `refreshSelect` re-sincroniza el texto
+    tras fijar value por código; `enhanceAllSelects` + `_watchSelects`
+    (MutationObserver) cubren también los `<select>` dinámicos (cuenta/mes de
+    Reportes de Caja). Init: `_initCustomSelects`.
+  - **PENDIENTE**:
+    - El `prompt()` de "¿qué lista trae el Excel? (7/VIP)" (`const choice =
+      prompt(...)`): pasarlo a un modal de **2 botones** (mejor que tipear). Es
+      el ÚNICO `prompt()` de texto que queda a la vista.
+    - Opcional: los `confirm()`/`alert()` restantes → mismo cuadro propio.
+    - Sin tocar a propósito: `<input type="date">` (mejor nativo) y los
+      `datalist` de marca/rubro en crear producto manual (mismo patrón que el
+      cliente si se quisiera).
+    - Falta que Julio confirme los desplegables en ventanas/modales y dinámicos.
+  > Mismo rediseño en StockVendedor (mantener en sync). Diferencias: el vendedor
+  > NO tiene `appPrompt` todavía (sus `prompt()` de contraseña siguen nativos)
+  > ni MutationObserver (enhancea en load); sí tiene tema, tarjetas
+  > (`.config-section`, `.template-section`, `.order-search-section`) y
+  > `enhanceSelect` en sus 3 selects.
+- **HECHO (2026-06-21): bitácora de diagnóstico** (`LOG.JS` + tabla `event_log`).
+  NO es un audit log para mirar desde la app: es una bitácora REMOTA para
+  diagnosticar cuando alguien reporta un error. Captura crashes de JS
+  (`window.onerror`/`unhandledrejection`) y fallos de operaciones riesgosas
+  (`pullOrders`/`publishCatalog`), con stack completo, contexto del dispositivo
+  (navegador, versión = nombre del cache del SW, online/offline) y **breadcrumbs**
+  (las últimas acciones, vía `addBreadcrumb`). Cada error le muestra al usuario un
+  código corto `ref` (ej. `A3F9`). Best-effort total: nunca rompe la app, y si la
+  subida falla queda en una **cola local** (`event_log_queue`, conservada por el
+  gran reset) que se reintenta al volver la conexión. **Cómo consultarla** (con
+  `SUPABASE_ACCESS_TOKEN`, Management API, endpoint `/v1/projects/<ref>/database/query`):
+  por código de referencia →
+  `select * from event_log where ref = 'A3F9' order by created_at desc;`
+  o los últimos errores →
+  `select created_at, app, actor, event, summary, meta from event_log where severity='error' order by created_at desc limit 50;`
+  El `meta.breadcrumbs` muestra qué pasó antes; `meta.error.stack`, el stack.
+  Mismo módulo en ambos repos (solo cambian `LOG_APP`/`LOG_ROLE`).
+- **HECHO (2026-06-13): acceso por persona a la nube** (Supabase Auth + RLS por
+  rol, hallazgo C1 de `AUDITORIA.md`). Ver la sección "Acceso por persona" en
+  "Conexión con la nube" (arriba) y `schema.sql`. Alta/baja de personas: crear/
+  borrar el usuario en Auth + su fila en `user_stores`.
 - No hay tests ni linters; es HTML+JS plano servido estático.
 - **Acceso directo a Supabase**: si la variable de entorno
   `SUPABASE_ACCESS_TOKEN` está definida, usarla con la Management API
