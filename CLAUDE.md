@@ -318,6 +318,17 @@ Dos canales equivalentes, según haya nube o no:
 - **Comisiones por vendedor**: % editable por vendedor (se guarda en
   `state.treasury.commissions`), aplicado sobre las ventas confirmadas de su
   cartera en el mes (pestaña Caja → Reportes).
+- **Imputación de pagos a comprobantes** — HECHO (2026-06-22): un pago
+  (cobranza) puede llevar `allocations:[{ref,usd}]` que dicen a qué pedido(s)
+  confirmado(s) se aplica y cuánto. Lo NO imputado queda **"a cuenta"** (baja la
+  deuda general igual). Los pagos viejos sin `allocations` = todo a cuenta (nada
+  cambia). La **deuda total NO depende de la imputación** (es solo detalle por
+  comprobante). En el formulario de cobranza se reparte FIFO (más viejo primero)
+  y es **ajustable a mano** (`movBuildImput`/`movAutofillImput`/`movImputRecalc`).
+  El estado por comprobante (🟢 pagado / 🟡 parcial / 🔴 pendiente) se ve en
+  "Dinero en calle" (desplegable `toggleCalleDetail`, helpers `_clientLedger`/
+  `_paidByOrder`/`_clientComprobantes`) y en el PDF de resumen. La `ref` del
+  pedido es `localId||orderId`. Todo local (`state.treasury`), solo central.
 
 ## Notas de desarrollo
 
