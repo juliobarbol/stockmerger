@@ -118,6 +118,26 @@ Config en `localStorage['sb_config'] = { url, anonKey, ns }`:
 - **`ns`** = "tienda" / namespace. **Es la clave que une ambas apps**: merger
   y vendedor deben usar el mismo `ns` para hablarse.
 
+**Conexión de fábrica — HECHO (2026-07-30)**: la app **ya viene conectada**. Las
+constantes `SB_DEFAULT_URL` / `SB_DEFAULT_KEY` / `SB_DEFAULT_NS` (arriba de
+`scGetConfig` en SUPABASE.JS) traen la URL, la anon key y el `ns` del proyecto,
+y `scGetConfig()` las usa cuando no hay `sb_config` guardado (o cuando algún
+campo vino vacío). En un dispositivo nuevo solo hay que **iniciar sesión**: no se
+pega URL ni key. Lo guardado a mano SIGUE teniendo prioridad (se puede apuntar a
+otro proyecto/tienda sin tocar el código). La anon key es pública por diseño
+(viaja en cada request del navegador) y no abre nada sola: RLS exige sesión +
+fila en `user_stores`. **Nunca** poner acá la service_role key. Mismo cambio en
+StockVendedor.
+
+**Sincronizar al iniciar sesión — HECHO (2026-07-30)**: el arranque de la app
+ocurre con el gate de login tapando todo, o sea SIN sesión, así que `srBoot()` /
+`pullOrders()` (central) y `pullCatalog()` (vendedor) fallaban por RLS y la app
+quedaba vacía hasta cerrarla y reabrirla. Ahora `srBoot()` **sale sin marcar
+`_srBooted`** si no hay sesión guardada (antes quedaba "ya arrancado" y no
+reintentaba nunca), y tanto `authGateLogin()` como `sbLogin()` llaman a
+`_sbAfterLoginSync()`, que dispara la bajada apenas hay sesión. Mismo helper en
+StockVendedor (ahí baja catálogo + fichas de clientes).
+
 Cliente creado con `supabase.createClient(url, anonKey)` (ver `scClient()`).
 
 La sección de conexión de la UI (pestaña Archivos) queda **oculta tras la

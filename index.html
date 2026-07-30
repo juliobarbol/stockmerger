@@ -9842,19 +9842,34 @@ if (typeof document !== 'undefined') {
 let _sbClient = null;       // cliente Supabase cacheado
 let _sbClientKey = '';      // url+anonKey con que se creó (para recrear si cambian)
 
+// ── CONEXIÓN DE FÁBRICA (para no pedirle nada al usuario) ──
+// La app viene con la conexión de la nube YA puesta: en un dispositivo nuevo
+// solo hay que iniciar sesión con email y contraseña, sin pegar URL ni key.
+// Si en `sb_config` hay algo guardado a mano, eso manda (permite apuntar a otro
+// proyecto o a otra tienda sin tocar el código).
+//
+// ⚠️ La anon key es PÚBLICA por diseño (viaja en cada pedido que hace el
+// navegador, igual que la Site Key de Turnstile) y NO abre la base por sí sola:
+// las policies de RLS exigen sesión iniciada + fila en `user_stores`. Acá NUNCA
+// va la service_role key ni ningún secreto — este repo se publica tal cual.
+const SB_DEFAULT_URL  = 'https://dxntcbssxjxtxznkdsot.supabase.co';
+const SB_DEFAULT_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR4bnRjYnNzeGp4dHh6bmtkc290Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5OTUwMDYsImV4cCI6MjA5NTU3MTAwNn0.9L79UHsEj0YXhasIRuOWBJPR3EOx9bvHpmnGFUmghYQ';
+const SB_DEFAULT_NS   = 'default';
+
 // ── Config ──
 function scGetConfig() {
+  const def = { url: SB_DEFAULT_URL, anonKey: SB_DEFAULT_KEY, ns: SB_DEFAULT_NS };
   try {
     const raw = Store.get('sb_config');
-    if (!raw) return { url: '', anonKey: '', ns: 'default' };
+    if (!raw) return def;
     const c = JSON.parse(raw);
     return {
-      url:     (c.url || '').trim().replace(/\/+$/, ''),
-      anonKey: (c.anonKey || '').trim(),
-      ns:      (c.ns || 'default').trim() || 'default',
+      url:     (c.url || SB_DEFAULT_URL).trim().replace(/\/+$/, ''),
+      anonKey: (c.anonKey || SB_DEFAULT_KEY).trim(),
+      ns:      (c.ns || SB_DEFAULT_NS).trim() || SB_DEFAULT_NS,
     };
   } catch (e) {
-    return { url: '', anonKey: '', ns: 'default' };
+    return def;
   }
 }
 
@@ -10113,6 +10128,18 @@ async function authGateLogin() {
   authGateRefresh();
   if (typeof sbLockRefresh === 'function') sbLockRefresh();
   if (typeof rtStartCentral === 'function') setTimeout(rtStartCentral, 300);
+  _sbAfterLoginSync();
+}
+
+// Tras iniciar sesión hay que traer los datos AHORA: el arranque de la app
+// ocurrió sin sesión (la pantalla de login estaba tapando todo), así que la
+// sincronización de stock/precios y la bajada de pedidos no pudieron correr.
+// Sin esto, el operador entraba y veía la app vacía hasta cerrarla y reabrirla.
+function _sbAfterLoginSync() {
+  if (typeof srBoot === 'function') setTimeout(() => { srBoot().catch(() => {}); }, 300);
+  if (typeof pullOrders === 'function') {
+    setTimeout(() => { pullOrders({ silent: true }).catch(() => {}); }, 1200);
+  }
 }
 // Escape para configurar la conexión (URL/key) cuando aún no hay con qué
 // loguearse. Protegido por la contraseña del candado.
@@ -10138,6 +10165,7 @@ async function sbLogin() {
   scStatus('Sesión iniciada ✓', 'ok');
   authGateRefresh();
   sbLockRefresh();
+  _sbAfterLoginSync();
 }
 async function sbLogout() {
   const client = scClient();
@@ -14106,6 +14134,10 @@ async function srBoot() {
   if (!srEnabled()) return;
   if (typeof scIsConfigured !== 'function' || !scIsConfigured()) return;
   if (typeof scLibReady !== 'function' || !scLibReady()) { setTimeout(srBoot, 1500); return; }
+  // Sin sesión iniciada, RLS rechaza todo y la bajada vuelve vacía. Salir SIN
+  // marcar _srBooted (si no, quedaba "ya arrancado" y el stock no aparecía
+  // hasta cerrar y reabrir la app). El login vuelve a llamar a srBoot().
+  if (typeof _sbHasStoredSession === 'function' && !_sbHasStoredSession()) return;
 
   // La central vieja (fila-gigante) fue retirada en la Etapa 4. Por las
   // dudas dejamos su flag apagado si quedó algo viejo en este dispositivo.
