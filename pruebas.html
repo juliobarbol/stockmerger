@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Banco de pruebas — StockMerger</title>
+<meta name="theme-color" content="#0d0f14">
+<!--
+  ════════════════════════════════════════════════════════════════════
+  BANCO DE PRUEBAS — StockMerger (central)
+  ════════════════════════════════════════════════════════════════════
+  Página de diagnóstico, SEPARADA de la app. Se abre en
+  https://stockmerger.<...>.workers.dev/pruebas.html
+
+  Cuatro bloques:
+    1. CONEXIÓN  — pruebas en vivo contra la nube (solo LEE, salvo una
+                   línea en la bitácora `event_log`).
+    2. DATOS Y STOCK — revisa el stock y los pedidos de ESTE dispositivo y
+                   los cruza con la nube. Incluye el chequeo clave:
+                   ¿quedó algún pedido de vendedor SIN importar?
+    3. AUTOMÁTICAS — carga la app REAL dentro de una copia aislada
+                   (iframe con almacenamiento falso en memoria) y verifica
+                   las reglas: clave `_key`, armado del catálogo, ingreso
+                   de pedidos, descuento de stock y su reversión.
+                   NO toca los datos reales.
+    4. LIMPIEZA  — borra de la nube los pedidos de prueba (PRUEBA-…) que
+                   deja el banco de pruebas del vendedor.
+
+  La tabla KEY_VECTORS del bloque 3 es IDÉNTICA a la del banco de pruebas
+  de StockVendedor: si `normalize()` cambia en una sola app, ese banco se
+  pone en rojo y avisa antes de que se rompan los pedidos.
+  ════════════════════════════════════════════════════════════════════
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.108.1/dist/umd/supabase.js" integrity="sha384-EjUdIVmzWliPzdzhxZ9ZoO0etXLKWuUPUftAGxP6qH6Lm4oLwoLaJR0Ba4pIDiDL" crossorigin="anonymous"></script>
+<style>
+  :root{
+    --bg:#0d0f14; --surface:#161a22; --surface2:#1d2230; --border:#2a3140;
+    --text:#e8ecf3; --dim:#98a2b6; --ok:#3fb87a; --warn:#e0a63a; --err:#e05a5a;
+    --accent:#5b8cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 0 60px;background:var(--bg);color:var(--text);
+       font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.5}
+  header{padding:18px 16px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+  h1{margin:0 0 4px;font-size:19px}
+  .sub{color:var(--dim);font-size:13px}
+  .wrap{max-width:820px;margin:0 auto;padding:0 12px}
+  .bar{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--border);
+       padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{background:var(--surface2);color:var(--text);border:1px solid var(--border);
+         border-radius:9px;padding:9px 14px;font-size:14px;cursor:pointer;font-family:inherit}
+  button:hover{background:#242b3b}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.danger{background:#3a1e1e;border-color:#5c2b2b;color:#ffb3b3}
+  button:disabled{opacity:.5;cursor:default}
+  .score{margin-left:auto;font-size:13px;color:var(--dim)}
+  .score b{color:var(--text)}
+  section{margin:16px 0;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  section > h2{margin:0;padding:13px 14px;font-size:16px;border-bottom:1px solid var(--border);
+               display:flex;align-items:center;gap:8px}
+  section > h2 .h2sub{font-weight:400;font-size:12px;color:var(--dim);margin-left:auto;text-align:right}
+  .body{padding:6px 14px 14px}
+  .note{color:var(--dim);font-size:13px;margin:10px 0}
+  .check{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #202634;align-items:flex-start}
+  .check:last-child{border-bottom:none}
+  .ico{flex:0 0 20px;font-size:15px;line-height:1.5}
+  .cname{font-weight:600;font-size:14px}
+  .cdet{color:var(--dim);font-size:13px;white-space:pre-wrap;word-break:break-word}
+  .cdet.bad{color:#ffb3b3}
+  .cdet.warned{color:#f0cd8a}
+  .hidden{display:none}
+  iframe#sandbox{position:absolute;width:1px;height:1px;left:-9999px;top:0;border:0;opacity:0}
+  .warnbox{background:#2a2114;border:1px solid #5c4a1f;border-radius:9px;padding:10px 12px;
+           font-size:13px;color:#f0cd8a;margin:10px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>🧪 Banco de pruebas — StockMerger (central)</h1>
+    <div class="sub">Revisa la conexión con los vendedores, el stock y las reglas del sistema.
+      Nada de lo que hace acá cambia el stock ni los pedidos.</div>
+  </div>
+</header>
+
+<div class="bar">
+  <div class="wrap" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%">
+    <button class="primary" id="btnAll" onclick="runAll()">▶ Correr todas las pruebas</button>
+    <button onclick="copyReport()">📋 Copiar resultado</button>
+    <span class="score" id="score">sin correr</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <section>
+    <h2>🔌 1 · Conexión con la nube <span class="h2sub" id="t1"></span></h2>
+    <div class="body">
+      <div class="note">Prueba el camino completo: internet → librería → configuración → sesión →
+        lectura de pedidos y catálogo → tiempo real. Solo lee.</div>
+      <button onclick="runSection(1)">Correr este bloque</button>
+      <div id="s1"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>📦 2 · Stock y pedidos <span class="h2sub" id="t2"></span></h2>
+    <div class="body">
+      <div class="note">Revisa el stock y los pedidos de este dispositivo y los cruza con la nube.
+        Acá aparece si <b>algún pedido de un vendedor quedó sin llegar</b>.</div>
+      <button onclick="runSection(2)">Correr este bloque</button>
+      <div id="s2"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>⚙️ 3 · Pruebas automáticas de la app <span class="h2sub" id="t3"></span></h2>
+    <div class="body">
+      <div class="note">Carga la app real en una copia aislada (con memoria falsa) y verifica las reglas.
+        <b>No toca tu stock ni tus pedidos</b>.</div>
+      <button onclick="runSection(3)">Correr este bloque</button>
+      <div id="s3"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>🧹 4 · Limpiar pedidos de prueba</h2>
+    <div class="body">
+      <div class="warnbox">⚠️ Esto <b>sí borra</b>: elimina de la nube los pedidos cuyo número empieza con
+        “PRUEBA-” (los que genera el banco de pruebas del vendedor). No toca ningún pedido real.</div>
+      <button onclick="listTestOrders()">Ver pedidos de prueba en la nube</button>
+      <button class="danger" onclick="cleanTestOrders()">Borrarlos de la nube</button>
+      <div id="s4"></div>
+    </div>
+  </section>
+
+</div>
+
+<iframe id="sandbox"></iframe>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+// Infraestructura del banco (render de resultados)
+// ════════════════════════════════════════════════════════════════════
+const REPORT = [];
+let TOTALS = { ok:0, warn:0, bad:0 };
+
+function el(id){ return document.getElementById(id); }
+
+function addCheck(sectionId, name, status, detail){
+  const box = el('s' + sectionId);
+  const d = document.createElement('div');
+  d.className = 'check';
+  const ico = status === 'ok' ? '✅' : status === 'warn' ? '⚠️' : status === 'bad' ? '❌' : '⏳';
+  d.innerHTML = '<div class="ico"></div><div style="flex:1"><div class="cname"></div>' +
+                '<div class="cdet"></div></div>';
+  d.querySelector('.ico').textContent = ico;
+  d.querySelector('.cname').textContent = name;
+  const det = d.querySelector('.cdet');
+  det.textContent = detail || '';
+  if (status === 'bad')  det.classList.add('bad');
+  if (status === 'warn') det.classList.add('warned');
+  box.appendChild(d);
+  if (status === 'ok')   TOTALS.ok++;
+  if (status === 'warn') TOTALS.warn++;
+  if (status === 'bad')  TOTALS.bad++;
+  REPORT.push(`[${ico}] ${name}${detail ? ' — ' + detail : ''}`);
+  refreshScore();
+  return d;
+}
+function refreshScore(){
+  el('score').innerHTML = `<b>${TOTALS.ok}</b> bien · <b>${TOTALS.warn}</b> a revisar · <b>${TOTALS.bad}</b> mal`;
+}
+function clearSection(id){ el('s' + id).innerHTML = ''; const t = el('t'+id); if (t) t.textContent = 'corriendo…'; }
+function doneSection(id, t0){ const t = el('t'+id); if (t) t.textContent = 'listo · ' + Math.round(performance.now()-t0) + ' ms'; }
+function copyReport(){
+  const txt = 'BANCO DE PRUEBAS — StockMerger\n' + new Date().toLocaleString('es-AR') + '\n\n' + REPORT.join('\n');
+  navigator.clipboard.writeText(txt)
+    .then(() => alert('Resultado copiado. Pegalo donde lo necesites.'))
+    .catch(() => alert('No se pudo copiar. Sacale una foto a la pantalla.'));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Utilidades compartidas
+// ════════════════════════════════════════════════════════════════════
+let _appHtml = null;
+async function appHtml(){
+  if (_appHtml) return _appHtml;
+  const r = await fetch('./index.html?nb=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) throw new Error('no se pudo leer index.html (' + r.status + ')');
+  _appHtml = await r.text();
+  return _appHtml;
+}
+
+// La central guarda todo en IndexedDB (con localStorage como respaldo).
+// Leemos las dos cosas, IndexedDB manda.
+let _storeCache = null;
+async function storeAll(){
+  if (_storeCache) return _storeCache;
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i); out[k] = localStorage.getItem(k);
+    }
+  } catch(e){}
+  try {
+    // Sin número de versión: abre la que exista (si mañana la app la sube, esto
+    // sigue funcionando en vez de romperse).
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('stockmerger_store');
+      r.onsuccess = () => res(r.result);
+      r.onerror   = () => rej(r.error);
+    });
+    if (!db.objectStoreNames.contains('kv')) throw new Error('sin almacén kv');
+    await new Promise((res, rej) => {
+      const cur = db.transaction('kv','readonly').objectStore('kv').openCursor();
+      cur.onsuccess = e => { const c = e.target.result; if (c) { out[c.key] = c.value; c.continue(); } else res(); };
+      cur.onerror   = () => rej(cur.error);
+    });
+  } catch(e){}
+  _storeCache = out;
+  return out;
+}
+function sjson(all, key, fallback){
+  try { const v = JSON.parse(all[key]); return v == null ? fallback : v; } catch(e){ return fallback; }
+}
+
+async function cloudConfig(){
+  const html = await appHtml();
+  const grab = (n) => (html.match(new RegExp('const\\s+' + n + '\\s*=\\s*[\'"]([^\'"]+)[\'"]')) || [])[1] || '';
+  const def = { url: grab('SB_DEFAULT_URL'), anonKey: grab('SB_DEFAULT_KEY'), ns: grab('SB_DEFAULT_NS') || 'default' };
+  const all = await storeAll();
+  let saved = {};
+  try { saved = JSON.parse(all['sb_config'] || '{}') || {}; } catch(e){}
+  return {
+    url:     (saved.url || def.url || '').trim().replace(/\/+$/, ''),
+    anonKey: (saved.anonKey || def.anonKey || '').trim(),
+    ns:      (saved.ns || def.ns || 'default').trim(),
+    fromDefaults: !(saved.url && saved.anonKey),
+  };
+}
+function projectRef(url){ try { return new URL(url).hostname.split('.')[0]; } catch(e){ return ''; } }
+function storedSession(url){
+  try { const raw = localStorage.getItem('sb-' + projectRef(url) + '-auth-token'); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+let _client = null;
+function sbClient(cfg){
+  if (_client) return _client;
+  if (!window.supabase || !window.supabase.createClient) return null;
+  _client = window.supabase.createClient(cfg.url, cfg.anonKey, {
+    auth: { persistSession:true, autoRefreshToken:true, storageKey:'sb-' + projectRef(cfg.url) + '-auth-token' },
+  });
+  return _client;
+}
+function days(iso){ const t = Date.parse(iso||''); return t ? (Date.now()-t)/86400000 : null; }
+function fdate(iso){ const t = Date.parse(iso||''); return t ? new Date(t).toLocaleString('es-AR') : 'sin fecha'; }
+
+// ════════════════════════════════════════════════════════════════════
+// BLOQUE 1 — Conexión con la nube
+// ════════════════════════════════════════════════════════════════════
+async function section1(){
+  const add = (n,s,d) => addCheck(1,n,s,d);
+
+  add('Internet en este dispositivo', navigator.onLine ? 'ok' : 'bad',
+      navigator.onLine ? 'Hay conexión.' : 'Sin conexión: la app anda igual pero no sincroniza.');
+
+  try {
+    const r = await fetch('./sw.js?nb=' + Date.now(), { cache:'no-store' });
+    const txt = await r.text();
+    const server = (txt.match(/const\s+CACHE\s*=\s*'([^']+)'/) || [])[1] || '?';
+    let installed = '(no hay cache instalado)';
+    if (window.caches) {
+      const keys = await caches.keys();
+      const mine = keys.filter(k => k.indexOf('stockmerger') === 0);
+      if (mine.length) installed = mine.join(', ');
+    }
+    const same = installed.indexOf(server) >= 0;
+    add('Versión de la app', same ? 'ok' : 'warn',
+        same ? 'Tenés la última versión publicada (' + server + ').'
+             : 'Instalada: ' + installed + '\nPublicada: ' + server +
+               '\nCerrá la app del todo y volvé a abrirla para actualizar.');
+  } catch(e){ add('Versión de la app','warn','No se pudo comparar: ' + (e.message||e)); }
+
+  const libOk = !!(window.supabase && window.supabase.createClient);
+  add('Librería de la nube (CDN)', libOk ? 'ok' : 'bad',
+      libOk ? 'Cargó bien desde jsdelivr.' : 'No cargó: la app funciona pero no sincroniza.');
+
+  let cfg;
+  try { cfg = await cloudConfig(); }
+  catch(e){ add('Configuración de la nube','bad','No se pudo leer index.html: ' + (e.message||e)); return; }
+
+  add('Configuración de la nube', (cfg.url && cfg.anonKey) ? 'ok' : 'bad',
+      'Tienda (ID): "' + cfg.ns + '"\nServidor: ' + (cfg.url || '(vacío)') +
+      '\nClave: …' + (cfg.anonKey||'').slice(-4) + '\n' +
+      (cfg.fromDefaults ? 'Viene de fábrica con la app (lo normal).'
+                        : 'Guardada a mano en este dispositivo (pisa a la de fábrica).'));
+
+  const sess = storedSession(cfg.url);
+  if (!sess || !sess.user) {
+    add('Sesión iniciada','bad','No hay sesión guardada. Abrí la app e iniciá sesión.');
+  } else {
+    const exp = sess.expires_at ? new Date(sess.expires_at*1000) : null;
+    const vencido = exp ? (Date.now() > exp.getTime()) : false;
+    add('Sesión iniciada', vencido ? 'warn' : 'ok',
+        'Email: ' + (sess.user.email||'?') +
+        (exp ? '\nPermiso válido hasta: ' + exp.toLocaleString('es-AR') : '') +
+        (vencido ? '\nVencido: se renueva solo apenas haya internet.' : ''));
+  }
+
+  if (!libOk || !cfg.url) return;
+  const client = sbClient(cfg);
+  if (!client) { add('Cliente de la nube','bad','No se pudo crear.'); return; }
+  window.__cfg = cfg;
+
+  // Rol (tiene que ser 'central')
+  try {
+    const { data, error } = await client.from('user_stores').select('ns, role');
+    if (error) add('Tu permiso en la tienda','warn','No se pudo consultar: ' + (error.message||'?'));
+    else {
+      const mine = (data||[]).filter(r => r.ns === cfg.ns);
+      const rol = mine.length ? mine[0].role : null;
+      add('Tu permiso en la tienda', rol === 'central' ? 'ok' : 'bad',
+          rol === 'central' ? 'Tienda "' + cfg.ns + '" · rol central (permiso completo).'
+            : rol ? 'Tu rol es "' + rol + '", no "central": no vas a poder publicar el catálogo ni borrar pedidos.'
+                  : 'Tu usuario no figura con permiso en la tienda "' + cfg.ns + '". Falta darlo de alta.');
+    }
+  } catch(e){ add('Tu permiso en la tienda','warn','No se pudo consultar: ' + (e.message||e)); }
+
+  // Catálogo publicado + latencia
+  try {
+    const t0 = performance.now();
+    const { data, error } = await client.from('catalog').select('payload, updated_at').eq('id', cfg.ns).maybeSingle();
+    const ms = Math.round(performance.now() - t0);
+    if (error) {
+      add('Catálogo publicado','bad','Error: ' + (error.message||'?'));
+    } else if (!data || !data.payload) {
+      add('Catálogo publicado','bad',
+          'No hay catálogo publicado para la tienda "' + cfg.ns + '". Los vendedores NO ven nada.\n' +
+          'Publicá desde la pestaña Archivos.');
+    } else {
+      const count = Array.isArray(data.payload.stock) ? data.payload.stock.length : 0;
+      const p = data.payload.prices || {};
+      const kb = Math.round(JSON.stringify(data.payload).length/1024);
+      window.__cloudCatalog = { count, updated: data.updated_at, payload: data.payload };
+      const edad = days(data.updated_at);
+      add('Catálogo publicado', (edad != null && edad > 2) ? 'warn' : 'ok',
+          count + ' productos · ' + kb + ' KB\n' +
+          'Precios — Lista 7: ' + Object.keys(p.act||{}).length +
+          ' · Distribuidor: ' + Object.keys(p.dist||{}).length +
+          ' · VIP: ' + Object.keys(p.vip||{}).length + '\n' +
+          'Última publicación: ' + fdate(data.updated_at) +
+          (edad != null && edad > 2 ? '\nHace ' + edad.toFixed(1) + ' días que no se publica.' : '') +
+          (kb > 3000 ? '\n⚠️ El catálogo es muy pesado: a los vendedores con señal floja les va a costar bajarlo.' : ''));
+    }
+    add('Tiempo de respuesta de la nube', ms < 1500 ? 'ok' : ms < 4000 ? 'warn' : 'bad', ms + ' ms');
+  } catch(e){ add('Catálogo publicado','bad','Error de red: ' + (e.message||e)); }
+
+  // Pedidos en la nube
+  try {
+    const { data, error } = await client.from('orders')
+      .select('order_id, vendor, client, created_at').eq('ns', cfg.ns)
+      .order('created_at', { ascending:false }).limit(500);
+    if (error) {
+      add('Leer pedidos de los vendedores','bad','Error: ' + (error.message||'?'));
+    } else {
+      window.__cloudOrders = data || [];
+      const ult = (data && data.length) ? data[0] : null;
+      add('Leer pedidos de los vendedores','ok',
+          (data||[]).length + ' pedido(s) en la nube (últimos 500)' +
+          (ult ? '\nEl más nuevo: ' + (ult.client||'(sin cliente)') + ' — ' + (ult.vendor||'?') +
+                 ' — ' + fdate(ult.created_at) : ''));
+    }
+  } catch(e){ add('Leer pedidos de los vendedores','bad','Error de red: ' + (e.message||e)); }
+
+  // Escritura (bitácora, inofensiva)
+  try {
+    const { error } = await client.from('event_log').insert({
+      app:'StockMerger', role:'central', ns:cfg.ns, actor:'banco-de-pruebas',
+      event:'selftest', severity:'info', summary:'Prueba de escritura desde el banco de pruebas',
+      ref:'TEST', meta:{ ua: navigator.userAgent.slice(0,120) },
+    });
+    add('Permiso para escribir en la nube', error ? 'bad' : 'ok',
+        error ? 'Error: ' + (error.message||'?') : 'Se escribió una línea de prueba en la bitácora.');
+  } catch(e){ add('Permiso para escribir en la nube','bad','Error de red: ' + (e.message||e)); }
+
+  // Realtime sobre pedidos
+  await new Promise(resolve => {
+    let done = false;
+    const finish = (s,d) => { if (done) return; done = true; add('Aviso instantáneo de pedidos nuevos', s, d); resolve(); };
+    const to = setTimeout(() => finish('warn',
+      'No abrió el canal en 10 segundos. Los pedidos igual llegan al abrir la app o con "Traer pedidos".'), 10000);
+    try {
+      const ch = client.channel('selftest-' + Date.now())
+        .on('postgres_changes', { event:'INSERT', schema:'public', table:'orders', filter:'ns=eq.'+window.__cfg.ns }, ()=>{})
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED') {
+            clearTimeout(to); try { client.removeChannel(ch); } catch(e){}
+            finish('ok','El canal abrió bien: los pedidos de los vendedores entran solos.');
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            clearTimeout(to);
+            finish('warn','El canal no abrió (' + status + '). Usá "Traer pedidos" a mano.');
+          }
+        });
+    } catch(e){ clearTimeout(to); finish('warn','No se pudo abrir: ' + (e.message||e)); }
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BLOQUE 2 — Stock y pedidos (lee lo guardado, solo lectura)
+// ════════════════════════════════════════════════════════════════════
+async function section2(){
+  const add = (n,s,d) => addCheck(2,n,s,d);
+  const all = await storeAll();
+
+  const mergedPayload = sjson(all, 'mergedstock', null) || {};
+  const merged = Array.isArray(mergedPayload.merged) ? mergedPayload.merged : [];
+  const recibidos = sjson(all, 'receivedorders', []) || [];
+  const chinaPrices = sjson(all, 'chinaprices', {}) || {};
+  const lastPull = all['sb_orders_lastpull'] || null;
+  const lastPubCount = parseInt(all['catalog_last_pub_count'], 10);
+
+  add('Stock cargado', merged.length ? 'ok' : 'bad',
+      merged.length ? merged.length + ' productos en el stock de este dispositivo.'
+                    : 'No hay stock cargado. Sin stock la app NO trae pedidos de la nube (los ignora).');
+
+  // Productos en negativo o sin cantidad
+  const negativos = merged.filter(r => (r.qty||0) < 0);
+  const sinCant   = merged.filter(r => r.qty == null);
+  add('Cantidades del stock', (negativos.length || sinCant.length) ? 'warn' : 'ok',
+      (negativos.length || sinCant.length)
+        ? negativos.length + ' producto(s) en negativo · ' + sinCant.length + ' sin cantidad.\n' +
+          (negativos.length ? 'Ej: ' + negativos.slice(0,3).map(r=>r.product+' ('+r.qty+')').join(' · ') : '')
+        : 'Ningún producto quedó en negativo.');
+
+  // Colisiones de clave (dos productos distintos con la misma clave interna)
+  const seen = new Map(); const colis = [];
+  merged.forEach(r => {
+    const prev = seen.get(r._key);
+    if (prev !== undefined && prev !== r.product) colis.push(prev + ' ≡ ' + r.product);
+    seen.set(r._key, r.product);
+  });
+  add('Productos que se pisan entre sí', colis.length ? 'warn' : 'ok',
+      colis.length ? colis.length + ' par(es) de productos distintos comparten la misma clave interna: ' +
+                     'en el catálogo del vendedor uno tapa al otro. Renombralos.\nEj: ' + colis.slice(0,3).join(' | ')
+                   : 'Ningún producto se pisa con otro.');
+
+  // Productos sin precio China (no salen con precio a los vendedores)
+  const sinChina = merged.filter(r => !(r._key in chinaPrices));
+  add('Productos sin precio de costo', sinChina.length ? 'warn' : 'ok',
+      sinChina.length ? sinChina.length + ' de ' + merged.length + ' productos no tienen precio China: ' +
+                        'salen SIN precio en las 3 listas y el vendedor no los puede pedir.\nEj: ' +
+                        sinChina.slice(0,3).map(r=>r.product).join(' · ')
+                      : 'Todos los productos tienen precio de costo.');
+
+  // Catálogo publicado vs stock local
+  const cc = window.__cloudCatalog;
+  if (cc) {
+    const dif = Math.abs(cc.count - merged.length);
+    add('¿El catálogo publicado está al día?', dif === 0 ? 'ok' : 'warn',
+        'En este dispositivo: ' + merged.length + ' productos\n' +
+        'Publicado para los vendedores: ' + cc.count + ' productos (' + fdate(cc.updated) + ')' +
+        (dif ? '\nHay ' + dif + ' de diferencia: publicá el catálogo para que los vendedores vean lo mismo.' : ''));
+  } else {
+    add('¿El catálogo publicado está al día?','warn','Corré primero el bloque 1 para poder comparar.');
+  }
+  if (!isNaN(lastPubCount) && cc && lastPubCount !== cc.count) {
+    add('Contador de publicación','warn',
+        'La app recuerda haber publicado ' + lastPubCount + ' productos, pero en la nube hay ' + cc.count +
+        '. Puede ser que otro dispositivo de la central haya publicado después.');
+  }
+
+  // ⭐ Pedidos que quedaron sin importar
+  const cloudOrders = window.__cloudOrders;
+  if (!cloudOrders) {
+    add('¿Llegaron todos los pedidos?','warn','Corré primero el bloque 1 (conexión) para poder comparar.');
+  } else {
+    const locales = new Set(recibidos.map(o => o.orderId).filter(Boolean));
+    const faltantes = cloudOrders.filter(r => r.order_id && !locales.has(r.order_id) &&
+                                              String(r.order_id).indexOf('PRUEBA-') !== 0);
+    add('¿Llegaron todos los pedidos?', faltantes.length ? 'bad' : 'ok',
+        faltantes.length
+          ? faltantes.length + ' pedido(s) están en la nube pero NO en este dispositivo:\n' +
+            faltantes.slice(0,6).map(r => '• ' + (r.client||'(sin cliente)') + ' — ' + (r.vendor||'?') +
+              ' — ' + fdate(r.created_at) + ' (' + r.order_id + ')').join('\n') +
+            (faltantes.length > 6 ? '\n… y ' + (faltantes.length-6) + ' más' : '') +
+            '\n\nTocá "Traer pedidos" en la pestaña Pedidos. Si igual no aparecen, avisá: hay que revisarlo.'
+          : cloudOrders.length + ' pedido(s) en la nube y todos están importados acá.');
+
+    // Cursor de descarga adelantado respecto a lo importado
+    if (lastPull && cloudOrders.length) {
+      const masNuevo = cloudOrders[0].created_at;
+      const atrasado = Date.parse(masNuevo) > Date.parse(lastPull);
+      add('Marcador de descarga de pedidos', atrasado ? 'warn' : 'ok',
+          'Última descarga registrada: ' + fdate(lastPull) + '\n' +
+          'Pedido más nuevo en la nube: ' + fdate(masNuevo) +
+          (atrasado ? '\nHay pedidos posteriores sin traer: tocá "Traer pedidos".' : ''));
+    }
+  }
+
+  // Pedidos recibidos: estados y problemas
+  const pend = recibidos.filter(o => o.status === 'pendiente');
+  const conf = recibidos.filter(o => o.status === 'confirmado');
+  const desc = recibidos.filter(o => o.status === 'descartado');
+  add('Pedidos en este dispositivo','ok',
+      recibidos.length + ' en total · ' + pend.length + ' pendientes · ' + conf.length +
+      ' confirmados · ' + desc.length + ' descartados.');
+
+  // Duplicados por número de pedido
+  const cnt = new Map();
+  recibidos.forEach(o => { if (o.orderId) cnt.set(o.orderId, (cnt.get(o.orderId)||0) + 1); });
+  const dups = [...cnt.entries()].filter(([,n]) => n > 1);
+  add('Pedidos duplicados', dups.length ? 'bad' : 'ok',
+      dups.length ? dups.length + ' pedido(s) figuran más de una vez (' +
+                    dups.slice(0,3).map(([id,n])=>id+' ×'+n).join(', ') + ').\n' +
+                    'Riesgo real: si se confirman las dos copias, el stock se descuenta dos veces.'
+                  : 'Ningún pedido está repetido.');
+
+  // Pendientes que no cierran contra el stock
+  const idx = new Map(merged.map(r => [r._key, r]));
+  let sinMatch = 0, superan = 0; const ejemplos = [];
+  pend.forEach(o => (o.items||[]).forEach(it => {
+    const s = idx.get(it.key);
+    if (!s) { sinMatch++; if (ejemplos.length < 3) ejemplos.push(it.label + ' (no está en el stock)'); }
+    else if (it.qty > (s.qty||0)) { superan++; if (ejemplos.length < 3) ejemplos.push(it.label + ': piden ' + it.qty + ', hay ' + (s.qty||0)); }
+  }));
+  add('Pedidos pendientes contra el stock', (sinMatch || superan) ? 'warn' : 'ok',
+      (sinMatch || superan)
+        ? sinMatch + ' producto(s) pedidos NO existen en el stock (no se van a descontar) y ' +
+          superan + ' piden más de lo disponible.\n' + ejemplos.join('\n')
+        : 'Todos los productos de los pedidos pendientes cruzan bien contra el stock.');
+
+  // Confirmados sin snapshot (no se pueden revertir)
+  const sinSnap = conf.filter(o => !Array.isArray(o.confirmSnapshot) || !o.confirmSnapshot.length);
+  add('Pedidos confirmados que se pueden revertir', sinSnap.length ? 'warn' : 'ok',
+      sinSnap.length ? sinSnap.length + ' de ' + conf.length + ' pedidos confirmados NO se pueden revertir ' +
+                       '(son anteriores a esa función, o no descontaron nada).'
+                     : conf.length + ' pedido(s) confirmados, todos reversibles.');
+
+  // Confirmados con incidencias
+  const conIssues = conf.filter(o => o.confirmIssues);
+  if (conIssues.length) {
+    add('Pedidos confirmados con faltantes','warn',
+        conIssues.length + ' pedido(s) se confirmaron con productos que no se pudieron descontar del todo. ' +
+        'Están marcados en el detalle de cada pedido.');
+  }
+
+  // Espacio
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      const usoMb = (est.usage||0)/1048576, cuotaMb = (est.quota||0)/1048576;
+      const pct = cuotaMb ? (usoMb/cuotaMb*100) : 0;
+      add('Espacio en el dispositivo', pct > 80 ? 'warn' : 'ok',
+          usoMb.toFixed(1) + ' MB usados de ' + cuotaMb.toFixed(0) + ' MB (' + pct.toFixed(1) + '%)' +
+          (pct > 80 ? '\nEstá justo: hacé un backup y liberá espacio.' : ''));
+    }
+  } catch(e){}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BLOQUE 3 — Pruebas automáticas sobre la app real (copia aislada)
+// ════════════════════════════════════════════════════════════════════
+function sandboxHtml(html){
+  let out = html
+    .replace(/<script\b[^>]*\bsrc=["'][^"']+["'][^>]*>\s*<\/script>/gi, '')
+    .replace(/<link\b[^>]*fonts\.(googleapis|gstatic)\.com[^>]*>/gi, '')
+    .replace(/'serviceWorker'\s+in\s+navigator/g, 'false');
+  const shim = [
+    '<script>(function(){',
+    '  var mem = Object.create(null);',
+    '  var fake = {',
+    '    getItem:function(k){k=String(k);return (k in mem)?mem[k]:null;},',
+    '    setItem:function(k,v){mem[String(k)]=String(v);},',
+    '    removeItem:function(k){delete mem[String(k)];},',
+    '    clear:function(){mem=Object.create(null);},',
+    '    key:function(i){var ks=Object.keys(mem);return i<ks.length?ks[i]:null;}',
+    '  };',
+    '  Object.defineProperty(fake,"length",{get:function(){return Object.keys(mem).length;}});',
+    '  try{Object.defineProperty(window,"localStorage",{value:fake,configurable:true});}catch(e){}',
+    '  try{Object.defineProperty(window,"sessionStorage",{value:fake,configurable:true});}catch(e){}',
+    '  try{Object.defineProperty(window,"indexedDB",{value:undefined,configurable:true});}catch(e){}',
+    '  window.turnstile={render:function(){return "stub";},getResponse:function(){return "";},reset:function(){}};',
+    '  window.fetch=function(){return Promise.reject(new Error("sandbox sin red"));};',
+    '  window.alert=function(){};',
+    '  window.prompt=function(){return null;};',
+    '  window.confirm=function(){return window.__YES__!==false;};',
+    '  window.__SANDBOX__=true;',
+    '})();<\/script>'
+  ].join('\n');
+  out = out.replace(/<head([^>]*)>/i, function(m, attrs){ return '<head' + attrs + '>' + shim; });
+  // Puente para mirar adentro: el estado de la app se declara con `const`, así
+  // que no queda colgado de la ventana. Un `eval` dentro de la copia sí lo ve.
+  return out + '\n<script>window.__x=function(e){return eval(e);};<\/script>\n';
+}
+
+let _W = null;
+async function bootSandbox(){
+  if (_W) return _W;
+  const html = sandboxHtml(await appHtml());
+  const iframe = el('sandbox');
+  await new Promise((resolve, reject) => {
+    const to = setTimeout(() => reject(new Error('la copia no terminó de cargar en 40 s')), 40000);
+    iframe.onload = () => { clearTimeout(to); resolve(); };
+    iframe.srcdoc = html;
+  });
+  const W = iframe.contentWindow;
+  for (let i = 0; i < 150; i++) {
+    try {
+      if (typeof W.__x === 'function' && W.__x('typeof state') === 'object' &&
+          typeof W.normalize === 'function' && typeof W.ingestVendorOrder === 'function') break;
+    } catch(e){}
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (typeof W.__x !== 'function') throw new Error('la copia cargó pero no se pudo mirar adentro');
+  W.S = W.__x('state');            // atajo al estado de la copia
+  if (!W.S) throw new Error('la copia cargó pero la app no arrancó');
+  // Los diálogos propios de la app (no los del navegador) también se responden solos
+  W.appConfirm = () => Promise.resolve(W.__YES__ !== false);
+  W.appPrompt  = () => Promise.resolve(null);
+  _W = W;
+  return W;
+}
+
+function assert(cond, msg){ if (!cond) throw new Error(msg || 'no se cumplió'); }
+function assertEq(got, exp, msg){
+  if (got !== exp) throw new Error((msg ? msg + ': ' : '') +
+    'esperaba ' + JSON.stringify(exp) + ' y dio ' + JSON.stringify(got));
+}
+function need(W, fn){
+  if (typeof W[fn] !== 'function') throw new Error('la app ya no tiene la función ' + fn + '()');
+  return W[fn];
+}
+
+// ESTA TABLA ES IDÉNTICA a la del banco de pruebas de StockVendedor.
+// Es el "pegamento" que cruza catálogo y pedidos entre las dos apps.
+const KEY_VECTORS = [
+  ['  Samsung A01 Core  ',   'samsung a01 core'],
+  ['SAMSUNG A01 CORE',       'samsung a01 core'],
+  ['Batería Motorola G-9',   'bateria motorola g 9'],
+  ['Módulo/Display A10',     'modulo display a10'],
+  ['Vidrio_Templado 6D',     'vidrio templado 6d'],
+  ['Cable  USB   Tipo-C',    'cable usb tipo c'],
+  ['Pin de Carga . A20',     'pin de carga a20'],
+  ['ÑANDÚ Ñoño',             'nandu nono'],
+  ['Tapa\\Trasera J7',       'tapa trasera j7'],
+];
+
+// Deja el estado de la copia listo para una prueba, con stock y precios propios.
+function seedCentral(W, items){
+  W.S.merged = items.map(it => ({
+    _key: W.normalize(it.p), product: it.p,
+    qty: it.q == null ? 10 : it.q, total: it.q == null ? 10 : it.q,
+    extraA: it.m || '', extraA2: it.r || '',
+  }));
+  W.S.chinaPrices = {};
+  W.S.merged.forEach((r, i) => { W.S.chinaPrices[r._key] = 10 + i; });
+  W.S.prices = {};
+  W.S.rubrosMultis = {};
+  items.forEach(it => {
+    const k = W.normalizeRubro(it.r || '');
+    if (k) W.S.rubrosMultis[k] = { l7: 1.3, vip: 1.6 };
+  });
+  W.S.distribuidorFactor = 2.7;
+  W.S.receivedOrders = [];
+  W.S.catalogOrder = { rubros:[], marcas:[] };
+  W.__YES__ = true;
+  need(W, 'markPricesDirty')();
+}
+function pedidoDe(items, extra){
+  return Object.assign({
+    orderId: 'PED-' + Math.random().toString(36).slice(2,8).toUpperCase(),
+    vendor:'Vendedor Test', vendorCode:'TST', list:'act', client:'Cliente Test',
+    notes:'', sourceFile:'(banco de pruebas)', items,
+  }, extra || {});
+}
+
+const TESTS_CENTRAL = [
+
+{ name:'La clave de producto se calcula igual que en el vendedor', run(W){
+    need(W,'normalize');
+    KEY_VECTORS.forEach(([entrada, esperado]) => {
+      assertEq(W.normalize(entrada), esperado, 'normalize("' + entrada + '")');
+    });
+    return KEY_VECTORS.length + ' nombres de producto dan exactamente la clave esperada.';
+} },
+
+{ name:'El catálogo que se publica tiene el formato que espera el vendedor', run(W){
+    seedCentral(W, [
+      {p:'Modulo A10', q:5, m:'Samsung',  r:'Repuestos'},
+      {p:'Bateria G9', q:3, m:'Motorola', r:'Repuestos'},
+    ]);
+    const built = need(W,'buildVendorPayload')();
+    assert(built && built.payload, 'buildVendorPayload no devolvió nada');
+    const p = built.payload;
+    assertEq(p._app, 'StockMerger', 'marca de la app');
+    assertEq(p._type, 'vendor_data_v2', 'tipo de archivo');
+    assertEq(Array.isArray(p.stock), true, 'lista de stock');
+    assertEq(p.stock.length, 2, 'productos');
+    ['act','dist','vip'].forEach(l => assert(p.prices && p.prices[l], 'falta la lista ' + l));
+    assertEq(Object.keys(p.prices.dist).length, 2, 'precios Distribuidor');
+    assertEq(Object.keys(p.prices.act).length, 2, 'precios Lista 7');
+    assertEq(Object.keys(p.prices.vip).length, 2, 'precios VIP');
+    assert(p.order && Array.isArray(p.order.rubros), 'falta el orden del catálogo');
+    const it = p.stock[0];
+    ['_key','product','qty','marca','rubro'].forEach(c => assert(c in it, 'al producto le falta ' + c));
+    return 'Trae stock, las 3 listas de precios y el orden del catálogo, con los nombres de campo correctos.';
+} },
+
+{ name:'Un pedido del vendedor cruza contra el stock por la clave', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:5, m:'Samsung', r:'Repuestos'}]);
+    const built = W.buildVendorPayload();
+    const prod = built.payload.stock[0];
+    // El vendedor manda el nombre del producto tal cual salió del catálogo
+    const res = need(W,'ingestVendorOrder')(pedidoDe([
+      { key: prod._key, label: prod.product, qty: 2, price: 15, subtotal: 30 },
+    ]), { askConfirm:false, silent:true, deferRender:true });
+    assertEq(res.status, 'imported', 'estado del ingreso');
+    const o = W.S.receivedOrders[0];
+    assertEq(o.items[0].matched, true, 'el producto no cruzó contra el stock');
+    assertEq(o.items[0].stockAtImport, 5, 'stock anotado al importar');
+    // Y también cruza si el vendedor NO manda la clave (se recalcula del nombre)
+    const res2 = W.ingestVendorOrder(pedidoDe([{ label: prod.product, qty: 1, price: 15 }]),
+                                     { askConfirm:false, silent:true, deferRender:true });
+    assertEq(res2.status, 'imported', 'segundo ingreso');
+    assertEq(W.S.receivedOrders[1].items[0].matched, true, 'sin clave explícita');
+    return 'El pedido encuentra el producto por la clave y también recalculándola del nombre.';
+} },
+
+{ name:'Un producto que ya no está en el stock se marca, no se descuenta', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:5, m:'Samsung', r:'Repuestos'}]);
+    const res = W.ingestVendorOrder(pedidoDe([
+      { label:'Modulo A10', qty:1, price:10 },
+      { label:'Producto Fantasma', qty:3, price:10 },
+    ]), { askConfirm:false, silent:true, deferRender:true });
+    assertEq(res.status, 'imported', 'ingreso');
+    const o = W.S.receivedOrders[0];
+    assertEq(o.items.length, 2, 'items');
+    assertEq(o.items[1].matched, false, 'el producto inexistente quedó marcado como sin match');
+    return 'Un producto que la central no tiene entra al pedido marcado como “no está en el stock”.';
+} },
+
+{ name:'Cantidades absurdas se recortan', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:5}]);
+    W.ingestVendorOrder(pedidoDe([{ label:'Modulo A10', qty: 999999999, price:10 }]),
+                        { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    assertEq(o.items[0].qty, W.__x('MAX_QTY_PER_LINE'), 'cantidad recortada al tope');
+    return 'Un pedido con una cantidad imposible se recorta al tope en vez de entrar crudo al stock.';
+} },
+
+{ name:'El mismo pedido no se importa dos veces', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:5}]);
+    const ped = pedidoDe([{ label:'Modulo A10', qty:1, price:10 }], { orderId:'PED-REPE' });
+    assertEq(W.ingestVendorOrder(ped, { askConfirm:false, silent:true, deferRender:true }).status, 'imported', '1ª vez');
+    assertEq(W.ingestVendorOrder(ped, { askConfirm:false, silent:true, deferRender:true }).status, 'duplicate', '2ª vez');
+    assertEq(W.S.receivedOrders.length, 1, 'pedidos guardados');
+    return 'Traer dos veces el mismo pedido de la nube no lo duplica.';
+} },
+
+{ name:'El mismo pedido tiene el mismo número en todos los dispositivos', run(W){
+    const f = need(W,'localIdForOrder');
+    assertEq(f('ABC123'), 'RO-ABC123', 'id derivado del número del pedido');
+    assertEq(f('ABC123'), f('ABC123'), 'siempre igual');
+    assert(f('') !== f(''), 'sin número de pedido, cada copia lleva un id propio');
+    return 'Dos dispositivos de la central le dan el MISMO identificador al mismo pedido (no se duplica al sincronizar).';
+} },
+
+{ name:'Si quedaron copias del mismo pedido, se juntan bien', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:5}]);
+    W.S.receivedOrders = [
+      { localId:'RO-X1', orderId:'X1', status:'pendiente',  importedAt:'2026-01-02T00:00:00Z', items:[], docs:[{tipo:'presupuesto',numero:1}], total:0, vendor:'V', client:'C' },
+      { localId:'ZZ-X1', orderId:'X1', status:'confirmado', importedAt:'2026-01-01T00:00:00Z', items:[], docs:[{tipo:'remito',numero:2}],      total:0, vendor:'V', client:'C' },
+    ];
+    const quitadas = need(W,'dedupeReceivedOrders')();
+    assertEq(quitadas, 1, 'copias juntadas');
+    assertEq(W.S.receivedOrders.length, 1, 'queda un solo pedido');
+    const o = W.S.receivedOrders[0];
+    assertEq(o.status, 'confirmado', 'gana el estado más avanzado');
+    assertEq(o.localId, 'RO-X1', 'se queda el identificador menor');
+    assertEq(o.docs.length, 2, 'se conservan los comprobantes de las dos copias');
+    return 'Las copias se funden con reglas fijas: gana lo confirmado y no se pierde ningún comprobante.';
+} },
+
+{ name:'Confirmar un pedido descuenta el stock', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:10}, {p:'Bateria G9', q:4}]);
+    W.ingestVendorOrder(pedidoDe([
+      { label:'Modulo A10', qty:3, price:10 },
+      { label:'Bateria G9', qty:1, price:10 },
+    ], { orderId:'PED-CONF' }), { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    W.__YES__ = true;
+    need(W,'confirmReceivedOrder')(o.localId);
+    assertEq(o.status, 'confirmado', 'estado');
+    assertEq(W.S.merged[0].qty, 7, 'stock del primer producto (10 - 3)');
+    assertEq(W.S.merged[1].qty, 3, 'stock del segundo producto (4 - 1)');
+    assertEq(o.ctaCte, true, 'queda marcado para la cuenta corriente');
+    assert(Array.isArray(o.confirmSnapshot) && o.confirmSnapshot.length === 2, 'guardó el respaldo para revertir');
+    return 'Al confirmar, cada producto baja exactamente lo pedido y queda registrado para poder revertir.';
+} },
+
+{ name:'El stock nunca queda en negativo', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:2}]);
+    W.ingestVendorOrder(pedidoDe([{ label:'Modulo A10', qty:5, price:10 }], { orderId:'PED-NEG' }),
+                        { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    W.__YES__ = true;
+    W.confirmReceivedOrder(o.localId);
+    assertEq(W.S.merged[0].qty, 0, 'stock final');
+    assert(o.confirmIssues && o.confirmIssues.parciales.length === 1, 'quedó anotado el faltante');
+    return 'Si se pide más de lo que hay, el stock queda en 0 (nunca negativo) y el faltante queda anotado.';
+} },
+
+{ name:'Confirmar dos veces no descuenta dos veces', run(W){
+    seedCentral(W, [{p:'Modulo A10', q:10}]);
+    W.ingestVendorOrder(pedidoDe([{ label:'Modulo A10', qty:3, price:10 }], { orderId:'PED-DOBLE' }),
+                        { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    W.__YES__ = true;
+    W.confirmReceivedOrder(o.localId);
+    assertEq(W.S.merged[0].qty, 7, 'después de confirmar una vez');
+    W.confirmReceivedOrder(o.localId);
+    assertEq(W.S.merged[0].qty, 7, 'después de intentar confirmar de nuevo');
+    return 'Tocar “Confirmar” dos veces no descuenta el stock por duplicado.';
+} },
+
+{ name:'Revertir un pedido devuelve el stock', async run(W){
+    seedCentral(W, [{p:'Modulo A10', q:10}]);
+    W.ingestVendorOrder(pedidoDe([{ label:'Modulo A10', qty:4, price:10 }], { orderId:'PED-REV' }),
+                        { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    W.__YES__ = true;
+    W.confirmReceivedOrder(o.localId);
+    assertEq(W.S.merged[0].qty, 6, 'stock tras confirmar');
+    await need(W,'revertReceivedOrder')(o.localId);
+    assertEq(o.status, 'pendiente', 'estado tras revertir');
+    assertEq(W.S.merged[0].qty, 10, 'stock restaurado');
+    return 'Revertir devuelve al stock exactamente lo que ese pedido había descontado.';
+} },
+
+{ name:'Revertir respeta los movimientos hechos en el medio', async run(W){
+    seedCentral(W, [{p:'Modulo A10', q:10}]);
+    W.ingestVendorOrder(pedidoDe([{ label:'Modulo A10', qty:4, price:10 }], { orderId:'PED-REV2' }),
+                        { askConfirm:false, silent:true, deferRender:true });
+    const o = W.S.receivedOrders[0];
+    W.__YES__ = true;
+    W.confirmReceivedOrder(o.localId);           // 10 → 6
+    W.S.merged[0].qty = 20;                  // entró mercadería nueva
+    await W.revertReceivedOrder(o.localId);      // debe sumar 4, no volver a 10
+    assertEq(W.S.merged[0].qty, 24, 'stock tras revertir con ingreso en el medio');
+    return 'Si entró mercadería después de confirmar, revertir suma lo descontado en vez de pisar el número.';
+} },
+
+{ name:'Orden del catálogo (rubro → marca → modelo correlativo)', run(W){
+    seedCentral(W, [
+      {p:'Modulo A10',      m:'Samsung',  r:'Repuestos'},
+      {p:'Modulo A02s',     m:'Samsung',  r:'Repuestos'},
+      {p:'Modulo A02',      m:'Samsung',  r:'Repuestos'},
+      {p:'Modulo A01 Core', m:'Samsung',  r:'Repuestos'},
+      {p:'Modulo A01',      m:'Samsung',  r:'Repuestos'},
+      {p:'Modulo G9',       m:'Motorola', r:'Repuestos'},
+      {p:'Funda X',         m:'Samsung',  r:'Accesorios'},
+      {p:'Cargador Z',      m:'Generico', r:'Otros'},
+    ]);
+    W.S.catalogOrder = { rubros:['Repuestos','Accesorios'], marcas:['Samsung','Motorola'] };
+    // Acá el stock lleva la marca en extraA y el rubro en extraA2 (así vienen
+    // las columnas del Excel), por eso se ordenan las filas tal cual.
+    const cmp = need(W,'makeCatalogCmp')();
+    const orden = [...W.S.merged].sort(cmp).map(r => r.product);
+    const esperado = ['Modulo A01','Modulo A01 Core','Modulo A02','Modulo A02s','Modulo A10',
+                      'Modulo G9','Funda X','Cargador Z'];
+    assertEq(orden.join(' | '), esperado.join(' | '), 'orden del catálogo');
+    return 'A01 < A01 Core < A02 < A02s < A10, y los rubros/marcas en la prioridad elegida.';
+} },
+
+{ name:'Vuelta completa: catálogo publicado → pedido → descuento', run(W){
+    seedCentral(W, [
+      {p:'Módulo Display A-10', q:9, m:'Samsung', r:'Repuestos'},
+      {p:'Batería  G9',         q:4, m:'Motorola', r:'Repuestos'},
+    ]);
+    // 1) La central arma el catálogo
+    const payload = W.buildVendorPayload().payload;
+    // 2) El vendedor arma el pedido con lo que vio en el catálogo
+    const items = payload.stock.map(s => ({
+      key: s._key, label: s.product, marca: s.marca, rubro: s.rubro,
+      qty: 2, price: (payload.prices.act[s._key] || {}).price || 1,
+    }));
+    items.forEach(i => { i.subtotal = i.qty * i.price; });
+    // 3) La central lo recibe y lo confirma
+    const res = W.ingestVendorOrder(pedidoDe(items, { orderId:'PED-E2E' }),
+                                    { askConfirm:false, silent:true, deferRender:true });
+    assertEq(res.status, 'imported', 'ingreso del pedido');
+    const o = W.S.receivedOrders[0];
+    assertEq(o.items.filter(i => i.matched).length, 2, 'productos que cruzaron contra el stock');
+    assert(o.total > 0, 'el total del pedido quedó en 0');
+    W.__YES__ = true;
+    W.confirmReceivedOrder(o.localId);
+    assertEq(W.S.merged[0].qty, 7, 'stock del primer producto');
+    assertEq(W.S.merged[1].qty, 2, 'stock del segundo producto');
+    return 'Los nombres con acentos, guiones y espacios dobles sobreviven todo el camino y el stock se descuenta bien.';
+} },
+
+];
+
+async function section3(){
+  let W;
+  try {
+    W = await bootSandbox();
+    addCheck(3, 'Copia aislada de la app', 'ok',
+      'La app real arrancó en una copia con memoria falsa. Tu stock y tus pedidos no se tocan.');
+  } catch(e){
+    addCheck(3, 'Copia aislada de la app', 'bad', 'No se pudo arrancar: ' + (e.message||e));
+    return;
+  }
+  for (const t of TESTS_CENTRAL) {
+    try {
+      const detalle = await t.run(W);
+      addCheck(3, t.name, 'ok', detalle || 'Pasó.');
+    } catch(e){
+      addCheck(3, t.name, 'bad', (e && e.message) || String(e));
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BLOQUE 4 — Limpiar pedidos de prueba de la nube
+// ════════════════════════════════════════════════════════════════════
+async function _testOrders(){
+  const cfg = await cloudConfig();
+  const client = sbClient(cfg);
+  if (!client) throw new Error('la librería de la nube no cargó');
+  const { data, error } = await client.from('orders')
+    .select('order_id, vendor, client, created_at')
+    .eq('ns', cfg.ns).like('order_id', 'PRUEBA-%');
+  if (error) throw new Error(error.message || 'error al consultar');
+  return { cfg, client, rows: data || [] };
+}
+async function listTestOrders(){
+  el('s4').innerHTML = '';
+  try {
+    const { rows } = await _testOrders();
+    addCheck(4, 'Pedidos de prueba en la nube', rows.length ? 'warn' : 'ok',
+      rows.length ? rows.length + ' pedido(s) de prueba:\n' +
+        rows.slice(0,10).map(r => '• ' + r.order_id + ' — ' + (r.vendor||'?') + ' — ' + fdate(r.created_at)).join('\n')
+      : 'No hay pedidos de prueba dando vueltas.');
+  } catch(e){ addCheck(4, 'Pedidos de prueba en la nube', 'bad', e.message || String(e)); }
+}
+async function cleanTestOrders(){
+  el('s4').innerHTML = '';
+  if (!confirm('Se van a borrar de la nube TODOS los pedidos cuyo número empieza con "PRUEBA-".\n\n¿Seguimos?')) return;
+  try {
+    const { cfg, client, rows } = await _testOrders();
+    if (!rows.length) { addCheck(4, 'Limpieza', 'ok', 'No había pedidos de prueba para borrar.'); return; }
+    const { error } = await client.from('orders').delete().eq('ns', cfg.ns).like('order_id', 'PRUEBA-%');
+    if (error) {
+      addCheck(4, 'Limpieza', 'bad', 'No se pudieron borrar: ' + (error.message||'?') +
+        '\n(Hace falta rol central y las reglas de borrado en la base.)');
+    } else {
+      addCheck(4, 'Limpieza', 'ok', rows.length + ' pedido(s) de prueba borrados de la nube.\n' +
+        'Si alguno ya se importó acá, descartalo a mano en la pestaña Pedidos.');
+    }
+  } catch(e){ addCheck(4, 'Limpieza', 'bad', e.message || String(e)); }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Orquestación
+// ════════════════════════════════════════════════════════════════════
+const SECTIONS = { 1: section1, 2: section2, 3: section3 };
+
+async function runSection(n){
+  clearSection(n);
+  const t0 = performance.now();
+  try { await SECTIONS[n](); }
+  catch(e){ addCheck(n, 'Error inesperado del banco de pruebas', 'bad', (e && e.message) || String(e)); }
+  doneSection(n, t0);
+}
+async function runAll(){
+  REPORT.length = 0;
+  TOTALS = { ok:0, warn:0, bad:0 };
+  el('btnAll').disabled = true;
+  try {
+    await runSection(1);
+    await runSection(2);
+    await runSection(3);
+  } finally { el('btnAll').disabled = false; }
+}
+</script>
+</body>
+</html>

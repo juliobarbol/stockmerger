@@ -352,6 +352,46 @@ Dos canales equivalentes, según haya nube o no:
 
 ## Notas de desarrollo
 
+- **HECHO (2026-07-30): banco de pruebas (`pruebas.html`)** — página aparte
+  (`/pruebas.html`, no linkeada desde la app) para diagnosticar stock y
+  conectividad sin entorno de desarrollo. Existe la gemela en StockVendedor.
+  Cuatro bloques:
+  1. **Conexión** (solo lee): internet, versión del SW instalada vs publicada,
+     librería CDN, config (`ns`/URL/últimos 4 de la key), sesión, **rol
+     `central` en `user_stores`**, catálogo publicado (productos, peso, precios
+     por lista, antigüedad), latencia, lectura de `orders`, canal de Realtime y
+     permiso de escritura (línea `selftest` en `event_log`).
+  2. **Stock y pedidos**: stock cargado, cantidades negativas, **colisiones de
+     `_key`** (mismo detector que `buildVendorPayload`), productos sin precio
+     China (salen sin precio en las 3 listas), catálogo publicado vs stock
+     local, **⭐ pedidos que están en la nube y NO se importaron acá**, cursor
+     `sb_orders_lastpull` vs pedido más nuevo, duplicados por `orderId`,
+     pendientes que no cruzan contra el stock, confirmados sin
+     `confirmSnapshot` (no reversibles) y espacio.
+  3. **Pruebas automáticas (15)**: cargan **la app real** en un iframe con
+     `localStorage`/`indexedDB` **falsos en memoria** (los `<script src>` de CDN
+     y el registro del SW se quitan del HTML inyectado) → no tocan el stock ni
+     los pedidos reales. Verifican `normalize()` contra una tabla de vectores,
+     forma del `vendor_data_v2`, cruce por `_key` (con y sin clave explícita),
+     ítem sin match, clamp de cantidades, dedupe por `orderId`,
+     `localIdForOrder`, `dedupeReceivedOrders`, descuento al confirmar, clamp en
+     0, doble confirmación, revertir (incl. con movimientos intermedios), orden
+     del catálogo y la **vuelta completa** catálogo → pedido → descuento.
+  4. **Limpieza**: borra de `orders` los `order_id` que empiezan con `PRUEBA-`
+     (los que genera el banco del vendedor). Requiere rol `central`.
+  - **Puente para mirar adentro**: `state` se declara con `const`, así que NO
+    cuelga de `window`. El banco inyecta al final del HTML
+    `window.__x = e => eval(e)` y toma `W.S = W.__x('state')`. Las **funciones**
+    sí son propiedades del global (se pueden stubbear). `appConfirm`/`appPrompt`
+    se reemplazan por promesas que responden solas.
+  - Ojo con los nombres de campo: en la central el stock lleva **`extraA` =
+    marca** y **`extraA2` = rubro** (así vienen las columnas del Excel), por eso
+    `makeCatalogCmp()` de acá ordena por esos campos y el del vendedor por
+    `marca`/`rubro`.
+  - **`KEY_VECTORS` es IDÉNTICA en los dos repos**: si `normalize()` cambia en
+    una sola app, ese banco se pone en rojo antes de que se rompan los pedidos.
+    Si se toca `normalize()`, hay que actualizar la tabla en **ambos**.
+  - Verificado corriendo los dos bancos en Chromium real (16/16 y 13/13).
 - **EN CURSO (2026-06-21): rediseño de UI ("estilo DaisyUI" sin build) — rama
   `claude/light-theme-ui-dtlqb5`, todo MERGEADO a `main`.** Trabajo con Julio,
   por etapas y publicando cada una. Hecho hasta ahora:
