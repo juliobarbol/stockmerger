@@ -11064,6 +11064,91 @@ function genLocalOrderId() {
   return `RO-${ts}-${rnd}`;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// IDENTIDAD DEL PEDIDO ENTRE DISPOSITIVOS DE LA CENTRAL
+// ════════════════════════════════════════════════════════════════════
+// Cada dispositivo de la central baja los pedidos de la nube por su cuenta y
+// antes le ponía a cada uno un localId AL AZAR. Como la sync por filas
+// identifica los pedidos por localId, el mismo pedido del vendedor quedaba
+// como DOS pedidos distintos: confirmar o revertir en un dispositivo no se
+// reflejaba en el otro, y la lista mostraba copias repetidas.
+//
+// Arreglo: el localId de un pedido que viene con orderId se DERIVA de ese
+// orderId (único por (ns, order_id) en la nube), así todos los dispositivos
+// llegan al mismo id. Para los pedidos que YA quedaron duplicados está
+// dedupeReceivedOrders(), que junta las copias con reglas fijas.
+function localIdForOrder(orderId) {
+  const clean = String(orderId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48);
+  return clean ? `RO-${clean}` : genLocalOrderId();
+}
+
+// Identidad compartida del pedido. Sin orderId (pedidos cargados a mano o de
+// un Excel viejo) no hay forma de cruzarlos entre dispositivos: van sueltos.
+function _orderIdent(o) {
+  return (o && o.orderId) ? 'oid:' + o.orderId : null;
+}
+
+const _ORDER_RANK = { confirmado: 3, pendiente: 2, descartado: 1 };
+function _orderRank(o) { return _ORDER_RANK[o && o.status] || 0; }
+
+// Fusiona dos copias del MISMO pedido. Las reglas son fijas (no dependen del
+// orden de llegada) para que los dos dispositivos terminen en el mismo
+// resultado sin pisarse:
+//   · gana el estado más avanzado (confirmado > pendiente > descartado);
+//   · si empatan, la copia importada primero;
+//   · el localId es el menor alfabéticamente (idéntico en ambos lados);
+//   · se conservan los comprobantes emitidos en cualquiera de las dos.
+function _mergeOrderPair(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  let win = a, lose = b;
+  const ra = _orderRank(a), rb = _orderRank(b);
+  if (rb > ra) { win = b; lose = a; }
+  else if (rb === ra) {
+    const ta = Date.parse(a.importedAt || '') || 0;
+    const tb = Date.parse(b.importedAt || '') || 0;
+    if (tb && (!ta || tb < ta)) { win = b; lose = a; }
+  }
+  const merged = Object.assign({}, win);
+  const ids = [a.localId, b.localId].filter(Boolean).sort();
+  if (ids.length) merged.localId = ids[0];
+  const docs = Array.isArray(win.docs) ? win.docs.slice() : [];
+  (Array.isArray(lose.docs) ? lose.docs : []).forEach(d => {
+    if (!d) return;
+    const ya = docs.some(x => x && x.tipo === d.tipo && x.numero === d.numero);
+    if (!ya) docs.push(d);
+  });
+  merged.docs = docs;
+  return merged;
+}
+
+// Junta las copias del mismo pedido que ya están en la lista (una por
+// dispositivo). Devuelve cuántas copias se eliminaron.
+function dedupeReceivedOrders() {
+  const list = state.receivedOrders || [];
+  const pos = new Map();
+  const out = [];
+  let removed = 0;
+  for (const o of list) {
+    const ident = _orderIdent(o);
+    if (!ident || !pos.has(ident)) {
+      if (ident) pos.set(ident, out.length);
+      out.push(o);
+      continue;
+    }
+    const i = pos.get(ident);
+    out[i] = _mergeOrderPair(out[i], o);
+    removed++;
+  }
+  if (removed) {
+    state.receivedOrders = out;
+    if (typeof saveReceivedOrders === 'function') saveReceivedOrders();
+    if (typeof srScheduleFlush === 'function') srScheduleFlush();
+    console.warn('dedupeReceivedOrders: se juntaron', removed, 'copia(s) de pedidos');
+  }
+  return removed;
+}
+
 // Flag de mutex simple: evita que doble click en "Confirmar" o "Revertir"
 // dispare la operación dos veces antes de que termine la primera.
 // (En mobile los clicks son síncronos pero los confirms muestran un alert
@@ -11234,7 +11319,9 @@ function ingestVendorOrder(src, opts = {}) {
   }
 
   const order = {
-    localId:     genLocalOrderId(),
+    // Derivado del orderId del vendedor: así el MISMO pedido tiene el mismo id
+    // en todos los dispositivos de la central y la sync no lo duplica.
+    localId:     src.orderId ? localIdForOrder(src.orderId) : genLocalOrderId(),
     orderId:     src.orderId || '',
     vendor:      src.vendor || '(sin vendedor)',
     vendorCode:  src.vendorCode || '',
@@ -13886,8 +13973,21 @@ function _orderRow(ns, o) {
 function _applyOrderRow(row) {
   const id = row.local_id;
   const i = state.receivedOrders.findIndex(o => o.localId === id);
-  if (row.deleted) { if (i >= 0) state.receivedOrders.splice(i, 1); }
-  else { if (i >= 0) state.receivedOrders[i] = row.payload; else state.receivedOrders.push(row.payload); }
+  if (row.deleted) {
+    if (i >= 0) state.receivedOrders.splice(i, 1);
+  } else if (i >= 0) {
+    // Misma copia del pedido: se aplica tal cual, así viajan los DOS sentidos
+    // (confirmar y revertir).
+    state.receivedOrders[i] = row.payload;
+  } else {
+    // No la tengo con ese id: puede ser el MISMO pedido que el otro dispositivo
+    // bajó con otro localId (los importados antes de este arreglo). Se fusiona
+    // en vez de sumar una copia repetida a la lista.
+    const ident = _orderIdent(row.payload);
+    const j = ident ? state.receivedOrders.findIndex(o => _orderIdent(o) === ident) : -1;
+    if (j >= 0) state.receivedOrders[j] = _mergeOrderPair(state.receivedOrders[j], row.payload);
+    else state.receivedOrders.push(row.payload);
+  }
   if (!_srBulk && typeof saveReceivedOrders === 'function') saveReceivedOrders();
 }
 
@@ -14005,6 +14105,10 @@ async function srPullAll() {
     if (rm.data) rm.data.forEach(row => { if (!row.deleted) _applyMultiRow(row); fp.multi[row.rubro] = { h: _hash(_multiContent(row.rubro)), ts: row.updated_at, del: !!row.deleted }; });
     if (st.data) st.data.forEach(row => { _applySettingRow(row); fp.settings[row.key] = { h: _hash(_settingValue(row.key)), ts: row.updated_at }; });
     if (ro.data) ro.data.forEach(row => { if (!row.deleted) _applyOrderRow(row); fp.orders[row.local_id] = { h: _hash(row.payload), ts: row.updated_at, del: !!row.deleted }; });
+    // Juntar las copias del mismo pedido que hayan quedado de antes del arreglo
+    // de identidad (una por dispositivo). El flush sube el resultado y marca
+    // como borrada la fila de la copia perdedora.
+    if (typeof dedupeReceivedOrders === 'function') dedupeReceivedOrders();
     _srBulk = false;
     // Guardar UNA sola vez tras el pull masivo (no por cada fila → evita O(n²)).
     if (typeof saveMerged === 'function')        saveMerged();
@@ -15455,6 +15559,11 @@ function _renderCajaReportes() {
       if (typeof loadTreasury === 'function')           loadTreasury();
       if (typeof loadPrices === 'function')             loadPrices();
     } catch (e) { console.warn('boot reload:', e && e.message); }
+
+    // Juntar copias repetidas del mismo pedido (quedaron de cuando cada
+    // dispositivo le ponía su propio id al bajarlo de la nube).
+    try { if (typeof dedupeReceivedOrders === 'function') dedupeReceivedOrders(); }
+    catch (e) { console.warn('boot dedupe:', e && e.message); }
 
     // Restaurar y renderizar el stock (lo que antes hacía la IIFE de ui.js).
     try { if (typeof restoreStockOnInit === 'function') restoreStockOnInit(); }

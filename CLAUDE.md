@@ -395,6 +395,29 @@ Dos canales equivalentes, según haya nube o no:
   > ni MutationObserver (enhancea en load); sí tiene tema, tarjetas
   > (`.config-section`, `.template-section`, `.order-search-section`) y
   > `enhanceSelect` en sus 3 selects.
+- **HECHO (2026-07-30): identidad del pedido entre dispositivos de la central.**
+  Cada dispositivo bajaba los pedidos de la nube por su cuenta y le ponía un
+  `localId` **al azar** (`genLocalOrderId`). Como `SYNC_ROWS.JS` identifica los
+  pedidos por `local_id`, el MISMO pedido del vendedor quedaba como dos filas
+  distintas en `received_orders`: confirmar o revertir en un equipo no se
+  reflejaba en el otro y la lista mostraba copias repetidas (se vieron 6 pedidos
+  duplicados, uno con 3 copias). Ahora:
+  - `ingestVendorOrder` usa `localIdForOrder(src.orderId)` → `RO-<orderId>`,
+    **igual en todos los dispositivos** (el `orderId` es único por
+    `(ns, order_id)`). Los pedidos sin `orderId` (a mano / Excel viejo) siguen
+    con id al azar y no se cruzan.
+  - `dedupeReceivedOrders()` junta las copias que ya existían, con reglas FIJAS
+    para que los dos equipos converjan igual (`_mergeOrderPair`): gana el estado
+    más avanzado (confirmado > pendiente > descartado), si empatan la copia
+    importada primero, `localId` = el menor alfabéticamente, y se conservan los
+    comprobantes (`docs`) de las dos. Corre en el arranque (BOOT) y al final de
+    `srPullAll()`; el flush marca `deleted` la fila de la copia perdedora.
+  - `_applyOrderRow` cruza primero por `local_id` (misma copia → se aplica tal
+    cual, así viajan confirmar Y revertir) y, si no la encuentra, por `orderId`
+    (→ fusiona en vez de agregar un duplicado).
+  Decisión de Julio: fusionar automáticamente; NO se revisó si algún stock quedó
+  descontado dos veces (eran pedidos de prueba). Nada de esto toca a
+  StockVendedor.
 - **HECHO (2026-06-21): bitácora de diagnóstico** (`LOG.JS` + tabla `event_log`).
   NO es un audit log para mirar desde la app: es una bitácora REMOTA para
   diagnosticar cuando alguien reporta un error. Captura crashes de JS
