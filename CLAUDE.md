@@ -395,6 +395,20 @@ Dos canales equivalentes, según haya nube o no:
   > ni MutationObserver (enhancea en load); sí tiene tema, tarjetas
   > (`.config-section`, `.template-section`, `.order-search-section`) y
   > `enhanceSelect` en sus 3 selects.
+- **HECHO (2026-07-30): texto seguro en los PDF** (`_pdfTxt` / `_pdfSafeDoc` en
+  UTILS.JS). Las fuentes que trae jsPDF solo dibujan **WinAnsi**; con cualquier
+  otro carácter cambia la codificación de TODA la línea y el lector la muestra
+  letra por letra y cortada. Pasaba en el resumen de cuenta corriente
+  (`exportClientStatement`), que escribía `≈ $ ...` → se veía `"H $ 5 0 2 ...`.
+  Ahora esa línea dice "Equivalente en pesos: $ …" y, además, los dos
+  generadores de PDF (`generatePDF` de DOCS.JS y `exportClientStatement`)
+  envuelven el documento con `_pdfSafeDoc(doc)`, que pasa **todo** el texto
+  (incluidas las tablas de autoTable) por `_pdfTxt`: reemplaza `≈ → ✓ ⚠ − ≤ ≥`
+  por equivalentes y descarta emojis. Importa porque parte del texto lo escriben
+  las personas (nombres de clientes, notas, productos). Al agregar texto a un PDF
+  no hace falta llamar a `_pdfTxt` a mano: el wrapper ya lo cubre. Verificado
+  generando los PDF con jsPDF real en Chromium (antes/después). StockVendedor no
+  genera PDF, así que no aplica.
 - **HECHO (2026-07-30): identidad del pedido entre dispositivos de la central.**
   Cada dispositivo bajaba los pedidos de la nube por su cuenta y le ponía un
   `localId` **al azar** (`genLocalOrderId`). Como `SYNC_ROWS.JS` identifica los

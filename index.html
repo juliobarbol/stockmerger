@@ -4647,6 +4647,61 @@ function toast(msg, type = 'ok') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+// ════════════════════════════════════════════════════════════════════
+// TEXTO SEGURO PARA LOS PDF
+// ════════════════════════════════════════════════════════════════════
+// Las fuentes que trae jsPDF (helvetica y compañía) solo saben dibujar los
+// caracteres de la tabla WinAnsi: el alfabeto latino con acentos, símbolos
+// comunes, €, guiones largos, etc. Si el texto trae CUALQUIER otro carácter
+// (≈, →, ✓, ⚠, un emoji…), jsPDF cambia la codificación de TODA esa línea y el
+// lector de PDF la muestra letra por letra y cortada — es lo que pasaba con el
+// "≈" del resumen de cuenta corriente.
+//
+// _pdfTxt() reemplaza esos caracteres por un equivalente legible y descarta los
+// que no tengan uno (mejor que arruinar la línea entera). Es importante porque
+// parte del texto de los PDF lo escriben las personas: nombres de clientes,
+// notas del pedido, nombres de productos.
+const _WINANSI_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
+const _PDF_CHAR_MAP = {
+  '≈': 'aprox.',  // ≈
+  '≠': '!=',      // ≠
+  '≤': '<=',      // ≤
+  '≥': '>=',      // ≥
+  '−': '-',       // − (menos "de verdad")
+  '→': '->',      // →
+  '←': '<-',      // ←
+  '✓': 'OK',      // ✓
+  '✔': 'OK',      // ✔
+  '✗': 'X',       // ✗
+  '✘': 'X',       // ✘
+  '⚠': '!',       // ⚠
+};
+function _pdfTxt(s) {
+  if (typeof s !== 'string' || !s) return s;
+  let out = '';
+  for (const ch of s) {                  // por code point: los emojis son pares
+    if (ch.codePointAt(0) <= 0xFF || _WINANSI_EXTRA.has(ch)) { out += ch; continue; }
+    const rep = _PDF_CHAR_MAP[ch];
+    if (rep !== undefined) out += rep;   // sin equivalente → se descarta
+  }
+  return out;
+}
+// Envuelve el doc.text de un documento jsPDF para que TODO lo que se dibuje
+// (incluidas las tablas de autoTable, que dibujan por esta misma vía) pase por
+// _pdfTxt. Así ningún PDF se rompe por un carácter suelto.
+function _pdfSafeDoc(doc) {
+  try {
+    if (!doc || typeof doc.text !== 'function' || doc.__pdfSafe) return doc;
+    const orig = doc.text.bind(doc);
+    doc.text = function (txt, ...rest) {
+      const clean = Array.isArray(txt) ? txt.map(_pdfTxt) : _pdfTxt(txt);
+      return orig(clean, ...rest);
+    };
+    doc.__pdfSafe = true;
+  } catch (e) { console.warn('_pdfSafeDoc:', e && e.message); }
+  return doc;
+}
+
 
 // ════════════════════════════════════════════════════════════════════
 // FILES.JS — Carga de archivo Excel de stock + mapper
@@ -12713,6 +12768,7 @@ function generatePDF(order, params) {
       return;
     }
     doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    _pdfSafeDoc(doc);   // nombres/notas con caracteres raros no rompen el PDF
     if (typeof doc.autoTable !== 'function') {
       toast('Faltan dependencias del PDF (autoTable). Recargá la página.', 'err');
       return;
@@ -15055,6 +15111,7 @@ function exportClientStatement(name) {
     const { jsPDF } = window.jspdf || {};
     if (!jsPDF) { toast('No se pudo cargar el generador de PDF. Revisá tu conexión.', 'err'); return; }
     doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    _pdfSafeDoc(doc);   // nombres/notas con caracteres raros no rompen el PDF
     if (typeof doc.autoTable !== 'function') { toast('Faltan dependencias del PDF (autoTable). Recargá la página.', 'err'); return; }
   } catch (err) {
     toast('Error al iniciar el generador de PDF: ' + (err.message || 'desconocido'), 'err');
@@ -15109,7 +15166,9 @@ function exportClientStatement(name) {
   if (state.treasury.rate > 0 && entry.saldo > 0) {
     yEnd += 5.5;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text(`≈ $ ${_fmtN(entry.saldo * state.treasury.rate)} (1 USD = $ ${_fmtN(state.treasury.rate)})`, 210 - MARG_X, yEnd, { align: 'right' });
+    // Sin el signo "≈": no existe en la fuente del PDF y hacía que el lector
+    // mostrara toda la línea letra por letra y cortada (ver _pdfTxt).
+    doc.text(`Equivalente en pesos: $ ${_fmtN(entry.saldo * state.treasury.rate)}  (1 USD = $ ${_fmtN(state.treasury.rate)})`, 210 - MARG_X, yEnd, { align: 'right' });
   }
 
   // ── Detalle por comprobante (qué pedido está pago / pendiente) ──
