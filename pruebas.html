@@ -317,7 +317,16 @@ async function section1(){
   // Rol (tiene que ser 'central')
   try {
     const { data, error } = await client.from('user_stores').select('ns, role');
-    if (error) add('Tu permiso en la tienda','warn','No se pudo consultar: ' + (error.message||'?'));
+    // La tabla de roles no siempre se puede leer desde la app (las reglas de la
+    // base no lo exigen). No es un problema: lo que importa es si funcionan las
+    // operaciones reales, que se prueban abajo (leer catálogo, leer pedidos,
+    // escribir la bitácora).
+    if (error && /permission denied|not exist|no existe/i.test(error.message || '')) {
+      add('Tu permiso en la tienda','ok',
+          'La lista de roles no se puede leer desde la app (es lo normal). ' +
+          'Lo que vale son las pruebas de acá abajo: si leés el catálogo y los pedidos, tenés permiso.');
+    }
+    else if (error) add('Tu permiso en la tienda','warn','No se pudo consultar: ' + (error.message||'?'));
     else {
       const mine = (data||[]).filter(r => r.ns === cfg.ns);
       const rol = mine.length ? mine[0].role : null;
@@ -666,6 +675,21 @@ function seedCentral(W, items){
   W.S.receivedOrders = [];
   W.S.catalogOrder = { rubros:[], marcas:[] };
   W.__YES__ = true;
+  // Al confirmar, la app deja una marca ("confirm_guard_…") que impide
+  // confirmar dos veces el mismo pedido desde otra pestaña. La copia de prueba
+  // se reutiliza entre corridas, así que hay que barrerlas: si no, a la SEGUNDA
+  // corrida las pruebas de confirmar quedarían bloqueadas por la corrida previa.
+  try {
+    const ls = W.localStorage;
+    for (let i = ls.length - 1; i >= 0; i--) {
+      const k = ls.key(i);
+      if (k && k.indexOf('confirm_guard_') === 0) ls.removeItem(k);
+    }
+  } catch(e){}
+  // Y los diálogos, por si algo los pisó mientras arrancaba la copia.
+  W.confirm    = () => W.__YES__ !== false;
+  W.alert      = () => {};
+  W.appConfirm = () => Promise.resolve(W.__YES__ !== false);
   need(W, 'markPricesDirty')();
 }
 function pedidoDe(items, extra){
