@@ -8163,8 +8163,16 @@ function confirmSetChinaPrice() {
     return;
   }
   const key = _settingChinaKey;
+  const _precioAntes = state.chinaPrices[key];
+  const _nuevoPrecio = Math.round(v * 10000) / 10000;
+  if (_precioAntes !== _nuevoPrecio) {
+    const _prod = (state.merged.find(r => r._key === key) || {}).product || key;
+    auditar('precio.cambiar',
+      `Cambió a mano el precio de costo de "${_prod}" de ${_precioAntes == null ? '(sin precio)' : _precioAntes} a ${_nuevoPrecio}`,
+      { producto: _prod, key, antes: _precioAntes == null ? null : _precioAntes, despues: _nuevoPrecio });
+  }
   // Guardar como dato base, marcado manual
-  state.chinaPrices[key] = Math.round(v * 10000) / 10000;
+  state.chinaPrices[key] = _nuevoPrecio;
   state.chinaSources[key] = 'manual';
   saveChinaPrices();
   saveChinaSources();
@@ -10800,6 +10808,27 @@ function logEvent(event, opts) {
   return ref;
 }
 
+// ── AUDITORÍA DE MOVIMIENTOS ──
+// Deja constancia REMOTA de las operaciones que mueven dinero o mercadería:
+// qué se hizo, cuándo, con qué valores y quién lo hizo. Usa la misma tabla
+// `event_log`, que es append-only (la base no da permiso de editar ni borrar)
+// y que NINGUNA pantalla de la app muestra: se consulta aparte, por fuera.
+//
+// Reglas de este registro:
+//   · nunca puede romper la app (best-effort, igual que logEvent);
+//   · el "quién" NO se le cree al navegador: la base lo fuerza al usuario de
+//     la sesión con un trigger (ver schema.sql, event_log_forzar_usuario);
+//   · todo lo que se edita o se borra guarda el ANTES y el DESPUÉS.
+function auditar(accion, resumen, datos) {
+  try {
+    return logEvent('audit.' + accion, {
+      severity: 'info',
+      summary:  String(resumen || ''),
+      meta:     { audit: datos || {} },
+    });
+  } catch (e) { return ''; }
+}
+
 // Sube lo que haya en la cola. Best-effort; requiere nube + sesión guardada.
 async function _logFlush() {
   if (_logFlushing) return;
@@ -11647,6 +11676,13 @@ function _doConfirmReceivedOrder(localId) {
   // los confirmados antes se consideran ya cobrados.
   order.ctaCte      = true;
   addBreadcrumb('order.confirm', { id: localId, client: order.cliente || order.client || '', items: order.items.length });
+  auditar('pedido.confirmar',
+    `Confirmó el pedido de ${order.client || '(sin cliente)'} (vendedor ${order.vendor || '?'}) por USD ${order.total}`, {
+      localId, orderId: order.orderId || '', vendedor: order.vendor || '', cliente: order.client || '',
+      lista: order.list, total: order.total, items: order.items.length,
+      descontado: snapshot.slice(0, 300).map(s => ({ k: s.key, de: s.qtyBefore, a: s.qtyAfter })),
+      sinDescontar: itemsIgnorados.length, parciales: itemsParciales.length,
+    });
 
   saveReceivedOrders();
   saveMerged();
@@ -11746,12 +11782,14 @@ async function _doRevertReceivedOrder(localId) {
   // absoluto que tenía antes. Así, si entre la confirmación y la reversión
   // hubo otros movimientos (otro pedido, un ingreso, un ajuste manual), esos
   // cambios se preservan en vez de pisarse.
+  const _devuelto = [];   // para la bitácora: qué se le devolvió al stock
   order.confirmSnapshot.forEach(snap => {
     const cur = state.merged.find(s => s._key === snap.key);
     if (!cur) return; // producto eliminado del stock — no se puede restaurar
     const descontado = Math.max(0, (snap.qtyBefore || 0) - (snap.qtyAfter || 0));
     cur.qty   = Math.max(0, (cur.qty || 0) + descontado);
     cur.total = cur.qty;
+    _devuelto.push({ k: snap.key, suma: descontado, queda: cur.qty });
   });
 
   // Volver al estado pendiente — el operador puede volver a confirmar o descartar
@@ -11768,6 +11806,12 @@ async function _doRevertReceivedOrder(localId) {
   // Limpiamos el snapshot porque ya no aplica
   delete order.confirmSnapshot;
   delete order.confirmIssues;
+
+  auditar('pedido.revertir',
+    `Revirtió la confirmación del pedido de ${order.client || '(sin cliente)'} (vendedor ${order.vendor || '?'}) por USD ${order.total}`, {
+      localId, orderId: order.orderId || '', vendedor: order.vendor || '', cliente: order.client || '',
+      total: order.total, devuelto: _devuelto.slice(0, 300),
+    });
 
   saveReceivedOrders();
   saveMerged();
@@ -11789,6 +11833,11 @@ async function discardReceivedOrder(localId) {
   }
   if (!await appConfirm({ message: `¿Descartar el pedido de ${order.vendor} (${order.client})?\nNo se descuenta nada del stock.`, okText: 'Descartar', danger: true })) return;
   order.status = 'descartado';
+  auditar('pedido.descartar',
+    `Descartó el pedido de ${order.client || '(sin cliente)'} (vendedor ${order.vendor || '?'}) por USD ${order.total}`, {
+      localId, orderId: order.orderId || '', vendedor: order.vendor || '',
+      cliente: order.client || '', total: order.total, items: (order.items || []).length,
+    });
   saveReceivedOrders();
   renderOrdersTab();
   toast('Pedido descartado', 'ok');
@@ -12709,6 +12758,9 @@ function confirmDocModal() {
     // tipo de cambio distinto, queda también como cotización del día (y viceversa,
     // openDocModal ya precarga desde ahí). Así ambas partes muestran el mismo dólar.
     if (state.treasury.rate !== tc) {
+      auditar('cotizacion.cambiar',
+        `Cambió la cotización del día de ${state.treasury.rate} a ${tc} al generar un comprobante`,
+        { antes: state.treasury.rate, despues: tc, origen: 'comprobante' });
       state.treasury.rate = tc;
       state.treasury.rateUpdatedAt = new Date().toISOString();
       saveTreasury();
@@ -12724,6 +12776,12 @@ function confirmDocModal() {
       fecha: _todayDDMMYYYY(),
       generatedAt: new Date().toISOString(),
     });
+    auditar('comprobante.emitir',
+      `Emitió ${tipo} Nº ${numero} para ${order.client || '(sin cliente)'} por USD ${order.total} (dólar ${tc})`, {
+        tipo, numero, tc, localId: order.localId, orderId: order.orderId || '',
+        cliente: order.client || '', vendedor: order.vendor || '', total: order.total,
+        estadoPedido: order.status,
+      });
     saveReceivedOrders();
 
     if (btn) {
@@ -14459,6 +14517,12 @@ const _cajaView = {
 function setCajaRate(v) {
   const rate = parseFloat(v);
   if (!rate || rate <= 0) { toast('Cotización inválida', 'err'); renderCajaTab(); return; }
+  const _rateAntes = state.treasury.rate;
+  if (rate !== _rateAntes) {
+    auditar('cotizacion.cambiar',
+      `Cambió la cotización del día de ${_rateAntes} a ${rate}`,
+      { antes: _rateAntes, despues: rate, origen: 'Caja' });
+  }
   state.treasury.rate = rate;
   state.treasury.rateUpdatedAt = new Date().toISOString();
   saveTreasury();
@@ -14587,6 +14651,14 @@ function _newMovId() { return 'm' + Date.now().toString(36) + Math.random().toSt
 function addCajaMovement(mov) {
   state.treasury.movements.push(mov);
   saveTreasury();
+  auditar('caja.alta',
+    `Registró ${mov.category} de ${mov.amount} en ${mov.account}` +
+    (mov.client ? ` — cliente ${mov.client}` : ''), {
+      id: mov.id, fecha: mov.date, categoria: mov.category, cuenta: mov.account,
+      monto: mov.amount, usd: mov.usd, cotizacion: mov.rate,
+      cliente: mov.client || '', concepto: mov.concept || '',
+      imputaciones: Array.isArray(mov.allocations) ? mov.allocations.slice(0, 100) : null,
+    });
 }
 
 async function deleteCajaMovement(id) {
@@ -14598,6 +14670,17 @@ async function deleteCajaMovement(id) {
   if (!await appConfirm({ message: `¿Borrar este movimiento?\n\n${m.date} · ${cat.name} · ${acc.name}\n${_fmtMon(m.amount, acc.cur)}${m.client ? '\nCliente: ' + m.client : ''}${m.concept ? '\n' + m.concept : ''}`, okText: 'Borrar', danger: true })) return;
   state.treasury.movements.splice(i, 1);
   saveTreasury();
+  auditar('caja.borrar',
+    `Borró un movimiento de ${m.category} de ${m.amount} en ${m.account}` +
+    (m.client ? ` — cliente ${m.client}` : ''), {
+      antes: {
+        id: m.id, fecha: m.date, categoria: m.category, cuenta: m.account,
+        monto: m.amount, usd: m.usd, cotizacion: m.rate,
+        cliente: m.client || '', concepto: m.concept || '',
+        registradoEl: m.createdAt || '',
+        imputaciones: Array.isArray(m.allocations) ? m.allocations.slice(0, 100) : null,
+      },
+    });
   renderCajaTab();
   toast('Movimiento borrado', 'ok');
 }

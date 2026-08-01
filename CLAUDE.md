@@ -350,7 +350,47 @@ Dos canales equivalentes, según haya nube o no:
   `_paidByOrder`/`_clientComprobantes`) y en el PDF de resumen. La `ref` del
   pedido es `localId||orderId`. Todo local (`state.treasury`), solo central.
 
+- **Bitácora de movimientos (auditoría) — HECHO (2026-08-01)**: la central
+  registra en la nube TODA operación que mueve dinero o mercadería, con el
+  antes y el después: confirmar / revertir / descartar un pedido, emitir un
+  comprobante, alta y baja de movimientos de caja, cambio de la cotización del
+  día y cambio a mano de un precio de costo. Va a `event_log` (append-only: la
+  base no da permiso de editar ni borrar) y **no se ve desde ninguna pantalla
+  de la app** — se consulta aparte con la Management API. El "quién" y el rol
+  los fuerza la BASE con un trigger (`event_log_forzar_usuario`), no el
+  navegador; la hora confiable es `created_at` (del servidor), no `occurred_at`
+  (del dispositivo). Objetivo declarado por Julio: poder detectar movimientos
+  fraudulentos y verificar que la app se usó bien.
+- **Aviso a los usuarios — PENDIENTE (a partir de ~septiembre 2026, tras 1 mes
+  de uso real)**: poner en la app un aviso de que los movimientos quedan
+  registrados con fecha, hora y usuario. Encuadre pedido por Julio: presentarlo
+  como parte del monitoreo de errores y la seguridad del sistema, **no** como
+  vigilancia; que los usuarios entiendan cómo funciona y deduzcan solos que un
+  movimiento fraudulento quedaría registrado. ⚠️ El texto tiene que ser
+  **cierto y completo** sobre QUÉ se registra (eso es lo que disuade) y no debe
+  negar el uso de control — decir "solo se usa para errores" sería falso.
+
 ## Notas de desarrollo
+
+- **HECHO (2026-08-01): bitácora de movimientos (auditoría antifraude)** —
+  `auditar(accion, resumen, datos)` en LOG.JS envuelve a `logEvent` y escribe
+  eventos `audit.*` en `event_log`. Enganches (todos en la central):
+  `_doConfirmReceivedOrder` · `_doRevertReceivedOrder` (junta `_devuelto` en el
+  loop de restauración) · `discardReceivedOrder` · el `order.docs.push` de
+  `confirmDocModal` · `addCajaMovement` · `deleteCajaMovement` (guarda el
+  movimiento entero en `meta.audit.antes`) · `setCajaRate` y el sync de TC del
+  modal del PDF · `confirmSetChinaPrice`. Todos guardan ANTES y DESPUÉS.
+  - **Tamper-proofing (lo que la hace servir como constancia)**: `user_id` y
+    `role` los pisa un trigger de la base (`event_log_forzar_usuario`) con la
+    sesión real — el navegador no puede mentir. `actor` (nombre visible) sigue
+    siendo cosmético. Sin policies de update/delete → nadie borra.
+  - **Cómo consultarla** (Management API, ver más abajo): filtrar por
+    `event like 'audit.%'` y mirar `meta->'audit'`.
+  - **Lo que NO cubre**: si alguien entrega mercadería y cobra sin registrar
+    nada en la app, no hay evento — eso se detecta por faltante de stock
+    (conteo físico contra el sistema), no por la bitácora.
+  - StockVendedor no cambió (los vendedores no tocan dinero); sí se sincronizó
+    su `schema.sql`.
 
 - **HECHO (2026-07-30): banco de pruebas (`pruebas.html`)** — página aparte
   (`/pruebas.html`, no linkeada desde la app) para diagnosticar stock y

@@ -301,3 +301,45 @@ drop policy if exists event_log_insert on event_log;
 drop policy if exists event_log_read   on event_log;
 create policy event_log_insert on event_log for insert to authenticated with check (store_role(ns) in ('central','vendor'));
 create policy event_log_read   on event_log for select to authenticated using (store_role(ns) = 'central');
+
+-- ── El "quién" lo pone la BASE, no el navegador ──
+-- La app manda `actor` (el nombre visible) y `role`, pero eso viaja desde el
+-- dispositivo: alguien con conocimientos podría falsearlo editando el pedido
+-- HTTP. Para que la bitácora sirva como constancia, el usuario real y el rol
+-- los escribe este trigger a partir de la sesión, pisando lo que haya mandado
+-- el cliente. Lo mismo vale para el reloj: `occurred_at` es la hora del
+-- dispositivo (puede estar mal); la hora confiable es `created_at`, que la
+-- pone el servidor.
+create or replace function event_log_forzar_usuario()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.user_id := auth.uid();
+  new.role    := coalesce(store_role(new.ns), new.role);
+  return new;
+end;
+$$;
+
+drop trigger if exists event_log_forzar_usuario_trg on event_log;
+create trigger event_log_forzar_usuario_trg
+  before insert on event_log
+  for each row execute function event_log_forzar_usuario();
+
+-- ── Auditoría de movimientos (eventos `audit.*`) ──
+-- Además de los errores, la central escribe acá las operaciones que mueven
+-- dinero o mercadería, con el ANTES y el DESPUÉS en meta.audit:
+--   audit.pedido.confirmar   · nace la deuda y sale el stock (qué se descontó)
+--   audit.pedido.revertir    · la deuda desaparece y el stock vuelve
+--   audit.pedido.descartar   · un pedido pendiente se da de baja
+--   audit.comprobante.emitir · remito / presupuesto / nota (número, total, TC)
+--   audit.caja.alta          · cobranza, gasto, ingreso o egreso registrado
+--   audit.caja.borrar        · movimiento borrado (guarda el movimiento entero)
+--   audit.cotizacion.cambiar · cambio del dólar del día (antes → después)
+--   audit.precio.cambiar     · precio de costo cargado a mano (antes → después)
+-- Consultas típicas (Management API, /v1/projects/<ref>/database/query):
+--   select created_at, actor, event, summary from event_log
+--    where event like 'audit.%' order by created_at desc limit 100;
+--   select created_at, actor, summary, meta->'audit' from event_log
+--    where event in ('audit.caja.borrar','audit.pedido.revertir')
+--    order by created_at desc;
